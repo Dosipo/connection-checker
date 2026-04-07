@@ -3,7 +3,6 @@
 import { useCallback, useMemo, useState } from "react";
 import {
   Activity,
-  Cpu,
   Download,
   Gauge,
   Globe,
@@ -34,7 +33,6 @@ import {
   measureDownloadWarmMainAndParallel,
   pingBurstSequential,
   pingOnce,
-  readNavigatorConnection,
   SEQ_PINGS,
 } from "@/lib/connection-measure";
 import { REACHABILITY_TARGETS } from "@/lib/reachability-targets";
@@ -44,7 +42,6 @@ import {
 } from "@/lib/reachability";
 import {
   WHITE_LIST_REACHABILITY_TARGETS,
-  WHITELIST_SOURCE_NEWS,
 } from "@/lib/whitelist-reachability-targets";
 import {
   formatMbps,
@@ -57,14 +54,8 @@ const PARALLEL_CHUNKS = EXTERNAL_SPEED_PARALLEL_URLS.length;
 
 const RUN_PROGRESS_TOTAL = SEQ_PINGS + 1 + 1 + 1 + 1;
 
-function probeModeLabel(mode: "cors" | "opaque"): string {
-  return mode === "cors"
-    ? "CORS (виден HTTP-статус)"
-    : "no-cors (opaque)";
-}
-
 function TableSkeletonRows({ rows, cols }: { rows: number; cols: number }) {
-  const widths = ["w-14", "w-36", "w-28", "w-14", "w-12", "w-14"];
+  const widths = ["w-14", "w-36", "w-28", "w-12", "w-14"];
   return (
     <>
       {Array.from({ length: rows }, (_, i) => (
@@ -84,13 +75,10 @@ function TableSkeletonRows({ rows, cols }: { rows: number; cols: number }) {
 
 export function ConnectionDashboard() {
   const [running, setRunning] = useState(false);
+  const [hasStarted, setHasStarted] = useState(false);
   const [runProgress, setRunProgress] = useState(0);
   const [phase, setPhase] = useState<string | null>(null);
   const [error, setError] = useState<string | null>(null);
-
-  const [netInfo, setNetInfo] = useState<ReturnType<
-    typeof readNavigatorConnection
-  > | null>(null);
 
   const [seqSamples, setSeqSamples] = useState<PingSample[]>([]);
   const [burstSamples, setBurstSamples] = useState<PingSample[]>([]);
@@ -135,7 +123,7 @@ export function ConnectionDashboard() {
 
   const reachabilityByRegion = useMemo(() => {
     const ru = reachability.filter((r) => r.region === "Россия");
-    const ab = reachability.filter((r) => r.region === "Зарубеж");
+    const ab = reachability.filter((r) => r.region === "Зарубежные сайты");
     const ok = (xs: ReachabilityResult[]) => xs.filter((x) => x.ok).length;
     return {
       ru: { ok: ok(ru), total: ru.length },
@@ -148,14 +136,14 @@ export function ConnectionDashboard() {
     [reachability]
   );
   const reachabilityAbroad = useMemo(
-    () => reachability.filter((r) => r.region === "Зарубеж"),
+    () => reachability.filter((r) => r.region === "Зарубежные сайты"),
     [reachability]
   );
 
   const reachabilityTargetTotals = useMemo(() => {
     const ruTotal = REACHABILITY_TARGETS.filter((t) => t.region === "Россия").length;
     const abroadTotal = REACHABILITY_TARGETS.filter(
-      (t) => t.region === "Зарубеж"
+      (t) => t.region === "Зарубежные сайты"
     ).length;
     return { ruTotal, abroadTotal, total: REACHABILITY_TARGETS.length };
   }, []);
@@ -231,6 +219,7 @@ export function ConnectionDashboard() {
   }, [running, hasRun, downMainMbps]);
 
   const run = useCallback(async () => {
+    setHasStarted(true);
     setRunning(true);
     setRunProgress(0);
     setError(null);
@@ -255,8 +244,6 @@ export function ConnectionDashboard() {
     };
 
     try {
-      setNetInfo(readNavigatorConnection());
-
       setPhase(`Последовательный RTT: 1 / ${SEQ_PINGS}`);
       const collected: PingSample[] = [];
       for (let i = 0; i < SEQ_PINGS; i++) {
@@ -326,8 +313,8 @@ export function ConnectionDashboard() {
   return (
     <TooltipProvider delayDuration={200}>
     <div className="mx-auto flex max-w-4xl flex-col gap-6 px-4 py-10">
-      <header className="flex flex-col gap-3 sm:flex-row sm:items-end sm:justify-between">
-        <div className="space-y-1">
+      <header className="space-y-3">
+        <div className="space-y-3">
           <h1 className="flex items-center gap-1 text-2xl font-semibold tracking-tight sm:gap-2">
             <Wifi className="size-7 shrink-0" aria-hidden />
             <span className="min-w-0 flex-1 leading-tight">
@@ -346,7 +333,7 @@ export function ConnectionDashboard() {
               </p>
               <p>
                 Ниже — отдельные HTTP(S)-пробы до выбранных хостов (Россия /
-                зарубеж) и к типовым ресурсам из публикаций Минцифры. Это не ICMP
+                зарубежные сайты) и к типовым ресурсам из публикаций Минцифры. Это не ICMP
                 ping: в браузере доступен только стек TLS + HTTP.
               </p>
               <p>
@@ -359,41 +346,47 @@ export function ConnectionDashboard() {
             HTTP-задержка и потери, throughput по HTTPS, доступность хостов.
             У блоков — иконка «i» с пояснениями.
           </p>
-          <div
-            className="flex flex-wrap items-center gap-2 pt-2"
-            role="list"
-            aria-label="Статус HTTP RTT и downlink"
-          >
-            <Badge
-              variant={apiServiceBadge.variant}
-              className="gap-1 font-medium"
-              role="listitem"
+          <div className="flex flex-col items-center gap-2 sm:items-start">
+            <Button
+              onClick={run}
+              disabled={running}
+              className="h-12 gap-2 px-6 text-base sm:min-w-64"
             >
-              <Globe className="size-3.5 opacity-90" aria-hidden />
-              {apiServiceBadge.text}
-            </Badge>
-            <Badge
-              variant={downlinkBadge.variant}
-              className="gap-1 font-medium"
-              role="listitem"
-            >
-              <Download className="size-3.5 opacity-90" aria-hidden />
-              {downlinkBadge.text}
-            </Badge>
+              {running ? (
+                <Loader2 className="size-4 animate-spin" aria-hidden />
+              ) : (
+                <RefreshCw className="size-4" aria-hidden />
+              )}
+              {running ? "Выполняется сценарий…" : "Полная диагностика"}
+            </Button>
+            <p className="min-h-[2.75rem] max-w-[22rem] text-xs leading-snug text-muted-foreground sm:text-left">
+              {running ? "\u00A0" : (phase ?? "\u00A0")}
+            </p>
           </div>
-        </div>
-        <div className="flex flex-col items-stretch gap-2 sm:items-end">
-          <Button onClick={run} disabled={running} className="gap-2 sm:min-w-44">
-            {running ? (
-              <Loader2 className="size-4 animate-spin" aria-hidden />
-            ) : (
-              <RefreshCw className="size-4" aria-hidden />
-            )}
-            {running ? "Выполняется сценарий…" : "Полная диагностика"}
-          </Button>
-          <p className="min-h-[2.75rem] max-w-[22rem] text-xs leading-snug text-muted-foreground sm:ml-auto sm:text-right">
-            {running ? "\u00A0" : (phase ?? "\u00A0")}
-          </p>
+          {hasStarted ? (
+            <div
+              className="flex flex-wrap items-center gap-2 pt-2"
+              role="list"
+              aria-label="Статус HTTP RTT и downlink"
+            >
+              <Badge
+                variant={apiServiceBadge.variant}
+                className="gap-1 font-medium"
+                role="listitem"
+              >
+                <Globe className="size-3.5 opacity-90" aria-hidden />
+                {apiServiceBadge.text}
+              </Badge>
+              <Badge
+                variant={downlinkBadge.variant}
+                className="gap-1 font-medium"
+                role="listitem"
+              >
+                <Download className="size-3.5 opacity-90" aria-hidden />
+                {downlinkBadge.text}
+              </Badge>
+            </div>
+          ) : null}
         </div>
       </header>
 
@@ -662,63 +655,6 @@ export function ConnectionDashboard() {
         </Card>
       </div>
 
-      <div className="grid gap-4">
-        <Card>
-          <CardHeader className="pb-2">
-            <CardTitle className="flex items-center gap-1 text-base font-medium">
-              <Cpu className="size-4 shrink-0 text-muted-foreground" aria-hidden />
-              <span className="min-w-0 flex-1 text-sm font-medium leading-snug sm:text-base">
-                Network Information API
-              </span>
-              <InfoTip label="navigator.connection" className="size-6 shrink-0">
-                <p>
-                  В Chromium доступен объект{" "}
-                  <span className="font-medium text-foreground">
-                    navigator.connection
-                  </span>
-                  : <span className="font-medium text-foreground">
-                    effectiveType
-                  </span>
-                  , оценочный downlink и RTT, флаг saveData. Это эвристика
-                  движка, не замер пакетами и не наше HTTP‑тестирование.
-                </p>
-              </InfoTip>
-            </CardTitle>
-            <CardDescription>
-              Chromium: грубая оценка канала до запуска тестов
-            </CardDescription>
-          </CardHeader>
-          <CardContent className="space-y-1 text-sm">
-            {netInfo ? (
-              <>
-                <p>
-                  <span className="text-muted-foreground">effectiveType: </span>
-                  {netInfo.effectiveType ?? "—"}
-                </p>
-                <p>
-                  <span className="text-muted-foreground">downlink (оценка): </span>
-                  {netInfo.downlinkMbps != null
-                    ? `${netInfo.downlinkMbps} Мбит/с`
-                    : "—"}
-                </p>
-                <p>
-                  <span className="text-muted-foreground">rtt (оценка): </span>
-                  {netInfo.rttMs != null ? `${netInfo.rttMs} мс` : "—"}
-                </p>
-                <p>
-                  <span className="text-muted-foreground">saveData: </span>
-                  {netInfo.saveData === true ? "да" : "нет"}
-                </p>
-              </>
-            ) : (
-              <p className="text-muted-foreground">
-                API не поддерживается (не Chromium / отключено).
-              </p>
-            )}
-          </CardContent>
-        </Card>
-      </div>
-
       <DeviceInfoPanel />
 
       <Card>
@@ -743,7 +679,7 @@ export function ConnectionDashboard() {
             </InfoTip>
           </CardTitle>
           <CardDescription>
-            Прямые HTTP-пробы; регионы — Россия и зарубежье
+            Прямые HTTP-пробы; регионы — Россия и зарубежные сайты
           </CardDescription>
           <div className="min-h-[1.375rem] pt-1 text-xs text-muted-foreground">
             {reachability.length > 0 ? (
@@ -753,7 +689,7 @@ export function ConnectionDashboard() {
                   {reachabilityByRegion.ru.ok}/{reachabilityByRegion.ru.total}
                 </span>
                 {" · "}
-                Зарубеж:{" "}
+                Зарубежные сайты:{" "}
                 <span className="font-medium text-foreground">
                   {reachabilityByRegion.abroad.ok}/
                   {reachabilityByRegion.abroad.total}
@@ -773,7 +709,6 @@ export function ConnectionDashboard() {
                 <th className="py-2 pr-2 font-medium">Регион</th>
                 <th className="py-2 pr-2 font-medium">Сервис</th>
                 <th className="py-2 pr-2 font-medium">Адрес</th>
-                <th className="py-2 pr-2 font-medium">Режим</th>
                 <th className="py-2 pr-2 font-medium">Статус</th>
                 <th className="py-2 font-medium">Время (мс)</th>
               </tr>
@@ -783,7 +718,7 @@ export function ConnectionDashboard() {
                 <>
                   <tr className="border-b border-border/80 bg-muted/40">
                     <td
-                      colSpan={6}
+                      colSpan={5}
                       className="py-2 pl-2 text-xs font-semibold uppercase tracking-wide text-muted-foreground"
                     >
                       Россия{" "}
@@ -798,9 +733,6 @@ export function ConnectionDashboard() {
                       <td className="py-2 pr-2 align-top">{row.label}</td>
                       <td className="max-w-[140px] truncate py-2 pr-2 align-top font-mono text-xs">
                         {row.host}
-                      </td>
-                      <td className="py-2 pr-2 align-top">
-                        {probeModeLabel(row.mode)}
                       </td>
                       <td className="py-2 pr-2 align-top">
                         {row.ok ? (
@@ -820,11 +752,11 @@ export function ConnectionDashboard() {
                   reachabilityRussia.length < reachabilityTargetTotals.ruTotal ? (
                     <TableSkeletonRows
                       rows={reachabilityTargetTotals.ruTotal - reachabilityRussia.length}
-                      cols={6}
+                      cols={5}
                     />
                   ) : null}
                   <tr aria-hidden="true">
-                    <td colSpan={6} className="border-t border-border py-2.5">
+                    <td colSpan={5} className="border-t border-border py-2.5">
                       <div className="flex items-center gap-3 text-muted-foreground/70">
                         <span className="h-px min-w-[1rem] flex-1 bg-border" />
                         <span className="shrink-0 select-none font-mono text-xs font-medium">
@@ -836,10 +768,10 @@ export function ConnectionDashboard() {
                   </tr>
                   <tr className="border-b border-border/80 bg-muted/40">
                     <td
-                      colSpan={6}
+                      colSpan={5}
                       className="py-2 pl-2 text-xs font-semibold uppercase tracking-wide text-muted-foreground"
                     >
-                      Зарубеж{" "}
+                      Зарубежные сайты{" "}
                       <span className="font-medium normal-case text-foreground">
                         ({reachabilityByRegion.abroad.ok}/{reachabilityByRegion.abroad.total})
                       </span>
@@ -851,9 +783,6 @@ export function ConnectionDashboard() {
                       <td className="py-2 pr-2 align-top">{row.label}</td>
                       <td className="max-w-[140px] truncate py-2 pr-2 align-top font-mono text-xs">
                         {row.host}
-                      </td>
-                      <td className="py-2 pr-2 align-top">
-                        {probeModeLabel(row.mode)}
                       </td>
                       <td className="py-2 pr-2 align-top">
                         {row.ok ? (
@@ -877,19 +806,19 @@ export function ConnectionDashboard() {
                         reachabilityTargetTotals.abroadTotal -
                         reachabilityAbroad.length
                       }
-                      cols={6}
+                      cols={5}
                     />
                   ) : null}
                 </>
               ) : running ? (
                 <TableSkeletonRows
                   rows={Math.min(8, reachabilityTargetTotals.total)}
-                  cols={6}
+                  cols={5}
                 />
               ) : (
                 <tr>
                   <td
-                    colSpan={6}
+                    colSpan={5}
                     className="py-6 text-center text-muted-foreground"
                   >
                     Нет данных — запустите сценарий
@@ -906,7 +835,7 @@ export function ConnectionDashboard() {
           <CardTitle className="flex items-center gap-1 text-base font-medium">
             <ShieldCheck className="size-4 shrink-0 text-muted-foreground" aria-hidden />
             <span className="min-w-0 flex-1 leading-tight">
-              Белый список Минцифры (репрезентативно)
+              Белый список Минцифры
             </span>
             <InfoTip label="О блоке" className="size-6 shrink-0">
               <p>
@@ -921,22 +850,8 @@ export function ConnectionDashboard() {
             </InfoTip>
           </CardTitle>
           <CardDescription>
-            Репрезентативный срез; первичный источник — digital.gov.ru
+            Первичный источник — digital.gov.ru
           </CardDescription>
-          <ul className="mt-3 list-none space-y-1.5 text-xs">
-            {WHITELIST_SOURCE_NEWS.map((item) => (
-              <li key={item.href}>
-                <a
-                  href={item.href}
-                  target="_blank"
-                  rel="noopener noreferrer"
-                  className="text-primary underline-offset-4 hover:underline"
-                >
-                  {item.title}
-                </a>
-              </li>
-            ))}
-          </ul>
           <div className="min-h-[1.25rem] pt-2 text-xs text-muted-foreground">
             {whitelistReachability.length > 0 ? (
               <>
@@ -959,7 +874,6 @@ export function ConnectionDashboard() {
                 <th className="py-2 pr-2 font-medium">Категория</th>
                 <th className="py-2 pr-2 font-medium">Сервис</th>
                 <th className="py-2 pr-2 font-medium">Адрес</th>
-                <th className="py-2 pr-2 font-medium">Режим</th>
                 <th className="py-2 pr-2 font-medium">Статус</th>
                 <th className="py-2 font-medium">Время (мс)</th>
               </tr>
@@ -973,9 +887,6 @@ export function ConnectionDashboard() {
                       <td className="py-2 pr-2 align-top">{row.label}</td>
                       <td className="max-w-[140px] truncate py-2 pr-2 align-top font-mono text-xs">
                         {row.host}
-                      </td>
-                      <td className="py-2 pr-2 align-top">
-                        {probeModeLabel(row.mode)}
                       </td>
                       <td className="py-2 pr-2 align-top">
                         {row.ok ? (
@@ -994,16 +905,16 @@ export function ConnectionDashboard() {
                   {running && whitelistReachability.length < whitelistTargetTotal ? (
                     <TableSkeletonRows
                       rows={whitelistTargetTotal - whitelistReachability.length}
-                      cols={6}
+                      cols={5}
                     />
                   ) : null}
                 </>
               ) : running ? (
-                <TableSkeletonRows rows={Math.min(8, whitelistTargetTotal)} cols={6} />
+                <TableSkeletonRows rows={Math.min(8, whitelistTargetTotal)} cols={5} />
               ) : (
                 <tr>
                   <td
-                    colSpan={6}
+                    colSpan={5}
                     className="py-6 text-center text-muted-foreground"
                   >
                     Нет данных — запустите сценарий
