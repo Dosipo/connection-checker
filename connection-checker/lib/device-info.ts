@@ -1,10 +1,8 @@
-import { getVpnHint, type VpnHint } from "@/lib/vpn-hint";
-
 export type DeviceInfoReport = {
   ipv4: string | null;
   ipv6: string | null;
+  /** `proxy` | `local` | `loopback` — см. `/api/client-info` */
   ipSource: string | null;
-  vpnHint: VpnHint;
   dateLocal: string;
   timeLocal: string;
   timezone: string;
@@ -120,6 +118,34 @@ async function readUserAgentData(): Promise<{
   }
 }
 
+export function formatIpv4ForDisplay(d: DeviceInfoReport): string {
+  if (d.ipv4) return d.ipv4;
+  switch (d.ipSource) {
+    case "local":
+      return "не передан (нет X-Forwarded-For / X-Real-IP — обычно при локальном next dev)";
+    case "loopback":
+      return "не определён (в заголовке только localhost — не адрес выхода в сеть)";
+    case "proxy":
+      return "не определён (IPv4 в ответе нет)";
+    default:
+      return "—";
+  }
+}
+
+export function formatIpv6ForDisplay(d: DeviceInfoReport): string {
+  if (d.ipv6) return d.ipv6;
+  switch (d.ipSource) {
+    case "local":
+      return "не передан (нет заголовков прокси — обычно при локальном next dev)";
+    case "loopback":
+      return "не определён (в заголовке только localhost — ::1 не показываем)";
+    case "proxy":
+      return "не определён (IPv6 в ответе нет)";
+    default:
+      return "—";
+  }
+}
+
 export async function buildDeviceInfoReport(): Promise<DeviceInfoReport> {
   const now = new Date();
   const dateLocal = now.toLocaleDateString("ru-RU", { dateStyle: "long" });
@@ -145,8 +171,6 @@ export async function buildDeviceInfoReport(): Promise<DeviceInfoReport> {
     void 0;
   }
 
-  const vpnHint = await getVpnHint(ipv4, ipv6);
-
   const { brands, mobile, platform: uaPlatform } = await readUserAgentData();
   const webgl = readWebGl();
 
@@ -159,7 +183,6 @@ export async function buildDeviceInfoReport(): Promise<DeviceInfoReport> {
     ipv4,
     ipv6,
     ipSource,
-    vpnHint,
     dateLocal,
     timeLocal,
     timezone: tz,
@@ -219,10 +242,9 @@ export function deviceInfoToPlainText(d: DeviceInfoReport): string {
     `Дата: ${d.dateLocal}`,
     `Время: ${d.timeLocal}`,
     `Часовой пояс: ${d.timezone} (${d.utcOffsetLabel})`,
-    `IPv4-адрес: ${d.ipv4 ?? "—"}`,
-    `IPv6-адрес: ${d.ipv6 ?? "—"}`,
+    `IPv4-адрес: ${formatIpv4ForDisplay(d)}`,
+    `IPv6-адрес: ${formatIpv6ForDisplay(d)}`,
     `Источник IP (сервер): ${d.ipSource ?? "—"}`,
-    `VPN (оценка): ${d.vpnHint.label}`,
     `Языки: ${d.languages}`,
     `Платформа (navigator.platform): ${d.platform}`,
     `User-Agent: ${d.userAgent}`,

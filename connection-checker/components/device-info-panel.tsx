@@ -15,14 +15,38 @@ import {
 import {
   buildDeviceInfoReport,
   deviceInfoToPlainText,
+  formatIpv4ForDisplay,
+  formatIpv6ForDisplay,
   type DeviceInfoReport,
 } from "@/lib/device-info";
 
+function isMissingValue(value: string): boolean {
+  const v = value.trim().toLowerCase();
+  return (
+    v === "—" ||
+    v === "-" ||
+    v === "н/д" ||
+    v === "n/a" ||
+    v.startsWith("не ") ||
+    v.startsWith("нет ") ||
+    v.includes("не определ")
+  );
+}
+
 function InfoRow({ label, value }: { label: string; value: string }) {
+  const missing = isMissingValue(value);
   return (
     <div className="grid gap-1 border-b border-border/60 py-2 text-sm sm:grid-cols-[minmax(0,11rem)_1fr] sm:gap-4">
       <dt className="text-muted-foreground">{label}</dt>
-      <dd className="min-w-0 break-words font-medium text-foreground">{value}</dd>
+      <dd
+        className={
+          missing
+            ? "min-w-0 break-words text-muted-foreground"
+            : "min-w-0 break-words font-medium text-foreground"
+        }
+      >
+        {value}
+      </dd>
     </div>
   );
 }
@@ -80,9 +104,8 @@ export function DeviceInfoPanel() {
               Клиент: устройство и HTTP-контекст
             </CardTitle>
             <CardDescription className="max-w-prose">
-              Отпечаток окружения (User-Agent, экран, IP с точки зрения сервера).
-              Не публикуйте без необходимости: набор полей сужает класс
-              устройств.
+              Сведения о браузере и устройстве (User-Agent, экран, IP по версии
+              сервера). Не публикуйте без необходимости.
             </CardDescription>
           </div>
           <div className="flex flex-wrap gap-2">
@@ -126,26 +149,8 @@ export function DeviceInfoPanel() {
         {data ? (
           <>
             <dl>
-              <InfoRow label="Адрес IPv4" value={data.ipv4 ?? "—"} />
-              <InfoRow label="Адрес IPv6" value={data.ipv6 ?? "—"} />
-              <div className="grid gap-1 border-b border-border/60 py-2 text-sm sm:grid-cols-[minmax(0,11rem)_1fr] sm:gap-4">
-                <dt className="flex items-center gap-0.5 text-muted-foreground">
-                  <span>VPN / прокси (эвристика)</span>
-                  <InfoTip label="STUN + сравнение IP" className="size-6">
-                    <p>{data.vpnHint.detail}</p>
-                    <p className="pt-2 text-muted-foreground">
-                      Сопоставляется публичный IP вашего HTTPS-запроса к этому
-                      сайту с IP из ICE-кандидата типа srflx (
-                      <span className="font-medium text-foreground">WebRTC</span>
-                      , публичный STUN). Прямого API «VPN on/off» в браузере нет;
-                      совпадение не исключает туннель с тем же egress.
-                    </p>
-                  </InfoTip>
-                </dt>
-                <dd className="min-w-0 break-words font-medium text-foreground">
-                  {data.vpnHint.label}
-                </dd>
-              </div>
+              <InfoRow label="Адрес IPv4" value={formatIpv4ForDisplay(data)} />
+              <InfoRow label="Адрес IPv6" value={formatIpv6ForDisplay(data)} />
               <InfoRow
                 label="Браузер"
                 value={browserLine}
@@ -159,7 +164,7 @@ export function DeviceInfoPanel() {
             </dl>
             <details className="rounded-lg border bg-muted/20 px-4 py-3">
               <summary className="cursor-pointer select-none text-sm font-medium">
-                Расширенные поля (Client Hints, WebGL, storage)
+                Дополнительная информация
               </summary>
               <p className="mb-3 mt-2 text-xs text-muted-foreground">
                 Те же риски утечки об отпечатке клиента; часть полей — сырой
