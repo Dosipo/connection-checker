@@ -1,15 +1,12 @@
 "use client";
 
-import { useCallback, useMemo, useState } from "react";
+import { useCallback, useEffect, useMemo, useState } from "react";
 import {
-  Activity,
   AlertCircle,
   Check,
   Download,
-  Gauge,
   Globe,
   Loader2,
-  Network,
   RefreshCw,
   Server,
   ShieldCheck,
@@ -17,8 +14,12 @@ import {
   X,
 } from "lucide-react";
 
+import { ConnectionQualityCard } from "@/components/connection-quality-card";
 import { DeviceInfoPanel } from "@/components/device-info-panel";
+import { DiagnosticSidePanel } from "@/components/diagnostic-side-panel";
 import { InfoTip } from "@/components/info-tip";
+import { ThemeToggle } from "@/components/theme-toggle";
+import { YandexRtbSlot } from "@/components/yandex-rtb-slot";
 import { Alert, AlertDescription, AlertTitle } from "@/components/ui/alert";
 import {
   Accordion,
@@ -47,7 +48,6 @@ import {
   CardHeader,
   CardTitle,
 } from "@/components/ui/card";
-import { Progress } from "@/components/ui/progress";
 import { TooltipProvider } from "@/components/ui/tooltip";
 import {
   BURST_PARALLEL,
@@ -66,11 +66,12 @@ import {
   WHITE_LIST_REACHABILITY_TARGETS,
 } from "@/lib/whitelist-reachability-targets";
 import {
-  formatMbps,
   stabilityLabel,
   summarizePings,
   type PingSample,
 } from "@/lib/metrics";
+import { buildDiagnosticVerdict } from "@/lib/diagnostic-verdict";
+import { phaseStringToStepIndex } from "@/lib/diagnostic-phase";
 import {
   runSysadminDiagnostics,
   type SysadminDiagnostics,
@@ -126,6 +127,11 @@ function TableSkeletonRows({ rows, cols }: { rows: number; cols: number }) {
 }
 
 export function ConnectionDashboard() {
+  const yandexHeaderBlock =
+    process.env.NEXT_PUBLIC_YANDEX_RTB_BLOCK_HEADER?.trim() || undefined;
+  const yandexFooterBlock =
+    process.env.NEXT_PUBLIC_YANDEX_RTB_BLOCK_FOOTER?.trim() || undefined;
+
   const [running, setRunning] = useState(false);
   const [hasStarted, setHasStarted] = useState(false);
   const [runProgress, setRunProgress] = useState(0);
@@ -145,6 +151,10 @@ export function ConnectionDashboard() {
   const [sysadminReport, setSysadminReport] =
     useState<SysadminDiagnostics | null>(null);
   const [sysadminError, setSysadminError] = useState<string | null>(null);
+
+  const [lastCompletedAt, setLastCompletedAt] = useState<number | null>(null);
+  const [completedFullRun, setCompletedFullRun] = useState(false);
+  const [partialMaxIndex, setPartialMaxIndex] = useState(-1);
 
   const seqSummary = useMemo(() => summarizePings(seqSamples), [seqSamples]);
   const burstSummary = useMemo(
@@ -252,6 +262,25 @@ export function ConnectionDashboard() {
     [seqSamples]
   );
 
+  useEffect(() => {
+    if (!running || !phase) return;
+    const i = phaseStringToStepIndex(phase);
+    if (i >= 0) setPartialMaxIndex((m) => Math.max(m, i));
+  }, [running, phase]);
+
+  const diagnosticVerdict = useMemo(
+    () =>
+      buildDiagnosticVerdict({
+        error,
+        hasRun,
+        seqSummary,
+        reachabilityRu: reachabilityByRegion.ru,
+        reachabilityAbroad: reachabilityByRegion.abroad,
+        whitelist: whitelistByRegion,
+      }),
+    [error, hasRun, seqSummary, reachabilityByRegion, whitelistByRegion]
+  );
+
   type ServiceBadgeVariant =
     | "success"
     | "secondary"
@@ -324,6 +353,8 @@ export function ConnectionDashboard() {
     setWhitelistReachability([]);
     setSysadminReport(null);
     setSysadminError(null);
+    setPartialMaxIndex(-1);
+    setCompletedFullRun(false);
 
     let progressDone = 0;
     const tickProgress = () => {
@@ -403,8 +434,12 @@ export function ConnectionDashboard() {
         );
       }
 
+      setCompletedFullRun(true);
+      setLastCompletedAt(Date.now());
+      setPartialMaxIndex(5);
       setPhase(null);
     } catch (e) {
+      setCompletedFullRun(false);
       setPhase(null);
       setError(
         e instanceof Error
@@ -422,13 +457,16 @@ export function ConnectionDashboard() {
     <div
       className={
         hasStarted
-          ? "mx-auto flex max-w-4xl flex-col gap-6 px-4 py-10"
-          : "flex min-h-dvh flex-col items-center justify-center px-4 py-10"
+          ? "mx-auto w-full max-w-8xl px-4 py-10"
+          : "mx-auto flex min-h-dvh w-full max-w-8xl flex-col items-center justify-center px-4 py-10"
       }
     >
       {!hasStarted ? (
       <header className="w-full max-w-xl space-y-4 text-center">
-        <div className="space-y-4 rounded-2xl border border-border/70 bg-card/60 p-6 shadow-sm backdrop-blur-sm sm:p-8">
+        <div className="space-y-4 rounded-3xl border border-border/70 bg-card/70 p-6 shadow-sm backdrop-blur-sm sm:p-8">
+          <div className="flex justify-end">
+            <ThemeToggle />
+          </div>
           <h1 className="flex flex-wrap items-center justify-center gap-2 text-2xl font-semibold tracking-tight sm:gap-3">
             <Wifi className="size-7 shrink-0" aria-hidden />
             <span className="min-w-0 leading-tight">
@@ -440,6 +478,11 @@ export function ConnectionDashboard() {
             запросов, скорость по HTTPS, доступность хостов — переключайте разделы
             под статусами.
           </p>
+          <YandexRtbSlot
+            blockId={yandexHeaderBlock}
+            compact
+            className="mx-auto w-full max-w-xl"
+          />
           <div className="flex flex-col items-center gap-2">
             <Button
               onClick={run}
@@ -460,10 +503,13 @@ export function ConnectionDashboard() {
         </div>
       </header>
       ) : (
+      <div className="grid w-full gap-8 lg:grid-cols-[minmax(0,1fr)_minmax(19rem,22rem)] lg:items-start">
+      <div className="order-2 flex min-w-0 flex-col gap-6 lg:order-1">
       <Tabs defaultValue="connection" className="flex w-full flex-col gap-6">
       <header className="w-full space-y-3">
-        <div className="space-y-3">
-          <h1 className="flex items-center gap-2 text-2xl font-semibold tracking-tight sm:gap-3">
+        <div className="flex flex-col gap-3 sm:flex-row sm:items-start sm:justify-between">
+        <div className="min-w-0 space-y-3">
+          <h1 className="flex flex-wrap items-center gap-2 text-2xl font-semibold tracking-tight sm:gap-3">
             <Wifi className="size-7 shrink-0" aria-hidden />
             <span className="min-w-0 leading-tight">
               Диагностика состояния сети
@@ -513,6 +559,8 @@ export function ConnectionDashboard() {
               {downlinkBadge.text}
             </Badge>
           </div>
+        </div>
+        <ThemeToggle className="shrink-0 self-end sm:mt-1" />
         </div>
         <TabsList
           className="grid h-auto w-full grid-cols-3 gap-1 rounded-lg bg-muted p-1 sm:h-10"
@@ -573,33 +621,12 @@ export function ConnectionDashboard() {
             Для сисадмина
           </TabsTrigger>
         </TabsList>
+        <YandexRtbSlot
+          blockId={yandexHeaderBlock}
+          compact
+          className="w-full pt-1"
+        />
       </header>
-
-      <Separator />
-
-      {running ? (
-        <Alert
-          role="status"
-          aria-busy="true"
-          aria-live="polite"
-          className="sticky top-0 z-40 -mx-4 max-sm:rounded-none border-primary/25 bg-background/95 shadow-sm backdrop-blur supports-[backdrop-filter]:bg-background/90 sm:-mx-0 sm:rounded-lg"
-        >
-          <Loader2
-            className="size-4 shrink-0 animate-spin text-primary"
-            aria-hidden
-          />
-          <AlertTitle className="mb-2 flex flex-wrap items-center justify-between gap-2 pr-0 sm:pr-6">
-            <span>Полная диагностика выполняется</span>
-            <span className="tabular-nums text-xs font-normal text-muted-foreground">
-              {runProgress}%
-            </span>
-          </AlertTitle>
-          <AlertDescription className="mt-0 space-y-2 [&_p]:leading-snug">
-            <Progress value={runProgress} className="h-2" />
-            <p className="text-xs">{phase ?? "…"}</p>
-          </AlertDescription>
-        </Alert>
-      ) : null}
 
       {error ? (
         <Alert variant="destructive">
@@ -612,231 +639,24 @@ export function ConnectionDashboard() {
       ) : null}
 
         <TabsContent value="connection" className="mt-4 space-y-6 focus-visible:ring-0">
-      <div className="grid gap-4 md:grid-cols-3">
-        <Card>
-          <CardHeader className="pb-2">
-            <CardTitle className="flex items-center gap-2 text-base">
-              <Gauge className="size-4 shrink-0 text-muted-foreground" aria-hidden />
-              <span className="min-w-0 flex-1 leading-tight">
-                Throughput (HTTPS ↓)
-              </span>
-              <InfoTip label="Как считается downlink" className="size-6">
-                <p>
-                  Три фазы GET по HTTPS к CDN: короткий warm-up, один крупный
-                  объект, затем {PARALLEL_CHUNKS} параллельных запросов — оценка
-                  взаимодействия TCP, TLS и HTTP с «толстыми» ответами.
-                </p>
-                <p>
-                  Мбит/с — по фактическому{" "}
-                  <span className="font-medium text-foreground">
-                    arrayBuffer
-                  </span>{" "}
-                  и времени; это не synthetic speedtest, а реальный браузерный
-                  путь до CDN.
-                </p>
-                {multipathHint ? (
-                  <p className="border-t border-border pt-2 font-medium text-foreground">
-                    Сейчас: {multipathHint}
-                  </p>
-                ) : null}
-              </InfoTip>
-            </CardTitle>
-            <CardDescription>
-              jsDelivr, CORS; warm-up, single stream, {PARALLEL_CHUNKS}× parallel
-            </CardDescription>
-          </CardHeader>
-          <CardContent className="space-y-3 text-sm">
-            <dl className="grid grid-cols-[1fr_auto] gap-x-2 gap-y-2 tabular-nums">
-              <dt className="text-muted-foreground">Один поток (крупный объект)</dt>
-              <dd className="text-right font-semibold">
-                {!hasRun && !running
-                  ? "—"
-                  : running && downMainMbps === null
-                    ? "…"
-                    : downMainMbps != null
-                      ? formatMbps(downMainMbps)
-                      : "н/д"}
-              </dd>
-              <dt className="text-muted-foreground">Параллельные GET</dt>
-              <dd className="text-right font-medium">
-                {!hasRun && !running
-                  ? "—"
-                  : running && downParallelMbps === null
-                    ? "…"
-                    : downParallelMbps != null
-                      ? formatMbps(downParallelMbps)
-                      : "н/д"}
-              </dd>
-              <dt className="text-muted-foreground">Warm-up (малый ответ)</dt>
-              <dd className="text-right text-muted-foreground">
-                {!hasRun && !running
-                  ? "—"
-                  : downWarmMbps != null
-                    ? formatMbps(downWarmMbps)
-                    : running
-                      ? "…"
-                      : "н/д"}
-              </dd>
-            </dl>
-            <div className="min-h-[2.75rem] text-xs leading-snug text-muted-foreground">
-              {multipathHint ?? "\u00A0"}
-            </div>
-          </CardContent>
-        </Card>
-
-        <Card>
-          <CardHeader className="pb-2">
-            <CardTitle className="flex items-center gap-2 text-base">
-              <Network className="size-4 shrink-0 text-muted-foreground" aria-hidden />
-              <span className="min-w-0 flex-1 leading-tight">
-                Потери на уровне HTTP
-              </span>
-              <InfoTip label="Методика «потерь»" className="size-6">
-                <p>
-                  Доля HTTP(S)-запросов, завершившихся без успеха для страницы:
-                  таймаут <span className="font-medium text-foreground">fetch</span>
-                  , сетевой обрыв, либо (в режиме CORS) код ответа 4xx/5xx.
-                </p>
-                <p>
-                  Часть проб — <span className="font-medium text-foreground">
-                    no-cors
-                  </span>{" "}
-                  (opaque): статус недоступен JS, но ошибка транспорта по-прежнему
-                  учитывается как неуспех.
-                </p>
-                <p>
-                  Сцена 1: {SEQ_PINGS} последовательных запросов. Сцена 2:
-                  burst из {BURST_PARALLEL} (тоже последовательно) — чтобы
-                  увидеть, как меняется результат при серии запросов к разным
-                  точкам.
-                </p>
-                <p>
-                  Не путать с ICMP или чистой потерей пакетов L3 — только прикладной
-                  HTTP в вашей среде.
-                </p>
-              </InfoTip>
-            </CardTitle>
-            <CardDescription>
-              Серия {SEQ_PINGS} · burst {BURST_PARALLEL} (последовательно)
-            </CardDescription>
-          </CardHeader>
-          <CardContent className="space-y-2 text-sm">
-            <p className="text-2xl font-semibold tabular-nums">
-              {seqSamples.length
-                ? `${seqSummary.lossPercent.toFixed(1)} %`
-                : running
-                  ? "…"
-                  : "—"}
-            </p>
-            <p className="min-h-[2.5rem] text-xs leading-snug text-muted-foreground">
-              <span className="tabular-nums">
-                Успешных:{" "}
-                {seqSamples.length
-                  ? `${seqSamples.length - seqSummary.failed} из ${seqSamples.length}`
-                  : running
-                    ? "…"
-                    : "—"}
-              </span>
-              {burstSamples.length > 0 ? (
-                <>
-                  {" "}
-                  · burst: потери {burstSummary.lossPercent.toFixed(1)}% (
-                  {burstSamples.length - burstSummary.failed} /{" "}
-                  {burstSamples.length})
-                </>
-              ) : running && seqSamples.length === SEQ_PINGS ? (
-                <> · burst: …</>
-              ) : (
-                <span className="invisible"> · burst: …</span>
-              )}
-            </p>
-          </CardContent>
-        </Card>
-
-        <Card>
-          <CardHeader className="pb-2">
-            <CardTitle className="flex items-center gap-2 text-base">
-              <Activity className="size-4 shrink-0 text-muted-foreground" aria-hidden />
-              <span className="min-w-0 flex-1 leading-tight">
-                Стабильность RTT
-              </span>
-              <InfoTip label="Формула стабильности" className="size-6">
-                <p>
-                  Нормированный балл 0–100 по успешности серии, джиттеру между
-                  соседними RTT, коэффициенту вариации и «хвосту» p95 относительно
-                  p50.
-                </p>
-                <p>
-                  При наличии меток Resource Timing усредняется TTFB — время до
-                  первого байта ответа по сравнению с началом fetch.
-                </p>
-              </InfoTip>
-            </CardTitle>
-            <CardDescription>
-              Плавность RTT и характер «хвоста» распределения
-            </CardDescription>
-          </CardHeader>
-          <CardContent className="space-y-3">
-            <div className="flex min-h-[2.25rem] flex-nowrap items-center gap-2">
-              <span className="text-2xl font-semibold tabular-nums">
-                {seqSamples.length
-                  ? `${seqSummary.stabilityScore}`
-                  : running
-                    ? "…"
-                    : "—"}
-              </span>
-              <span className="inline-flex min-h-6 items-center">
-                {seqSamples.length ? (
-                  <Badge variant={stabilityVariant}>{stabilityText}</Badge>
-                ) : running ? (
-                  <Badge
-                    variant="secondary"
-                    className="pointer-events-none invisible"
-                    aria-hidden
-                  >
-                    отлично
-                  </Badge>
-                ) : null}
-              </span>
-            </div>
-            <Progress
-              value={seqSamples.length ? seqSummary.stabilityScore : 0}
-            />
-            <dl className="grid grid-cols-2 gap-x-3 gap-y-1 text-xs text-muted-foreground">
-              <dt>p50 / p95 RTT</dt>
-              <dd className="text-right tabular-nums text-foreground">
-                {seqSamples.length
-                  ? `${seqSummary.dist.p50.toFixed(0)} / ${seqSummary.dist.p95.toFixed(0)} мс`
-                  : "—"}
-              </dd>
-              <dt>Джиттер (соседние RTT)</dt>
-              <dd className="text-right tabular-nums text-foreground">
-                {seqSamples.length
-                  ? `${seqSummary.jitterMs.toFixed(1)} мс`
-                  : "—"}
-              </dd>
-              <dt className="flex items-center justify-start gap-0.5">
-                <span>Средний TTFB</span>
-                <InfoTip label="TTFB в этой таблице" className="size-5">
-                  <p>
-                    Среднее{" "}
-                    <span className="font-medium text-foreground">responseStart − fetchStart</span>{" "}
-                    по Resource Timing для успешных проб, где браузер заполнил
-                    эти поля.
-                  </p>
-                </InfoTip>
-              </dt>
-              <dd className="text-right tabular-nums text-foreground">
-                {seqSamples.length && ttfbCount > 0
-                  ? `${seqSummary.meanTtfbMs.toFixed(0)} мс`
-                  : seqSamples.length
-                    ? "н/д"
-                    : "—"}
-              </dd>
-            </dl>
-          </CardContent>
-        </Card>
-      </div>
+      <ConnectionQualityCard
+        hasRun={hasRun}
+        running={running}
+        seqSamplesLength={seqSamples.length}
+        seqSummary={seqSummary}
+        burstSamplesLength={burstSamples.length}
+        burstSummary={burstSummary}
+        seqPings={SEQ_PINGS}
+        burstParallel={BURST_PARALLEL}
+        downWarmMbps={downWarmMbps}
+        downMainMbps={downMainMbps}
+        downParallelMbps={downParallelMbps}
+        parallelChunks={PARALLEL_CHUNKS}
+        multipathHint={multipathHint}
+        stabilityText={stabilityText}
+        stabilityVariant={stabilityVariant}
+        ttfbCount={ttfbCount}
+      />
 
       <Separator />
 
@@ -1325,7 +1145,26 @@ export function ConnectionDashboard() {
       </Card>
 
         </TabsContent>
+
+        <Separator />
+        <YandexRtbSlot
+          blockId={yandexFooterBlock}
+          compact
+          className="w-full pt-2"
+        />
       </Tabs>
+      </div>
+      <DiagnosticSidePanel
+        className="order-1 lg:order-2"
+        running={running}
+        runProgress={runProgress}
+        phase={phase}
+        lastCompletedAt={lastCompletedAt}
+        verdict={diagnosticVerdict}
+        completedFullRun={completedFullRun}
+        partialMaxIndex={partialMaxIndex}
+      />
+      </div>
       )}
 
     </div>

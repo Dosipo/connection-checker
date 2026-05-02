@@ -3,6 +3,9 @@ import { Geist, Geist_Mono } from "next/font/google";
 
 import "./globals.css";
 
+import { ThemeProvider } from "@/components/theme-provider";
+import { YandexRsyScripts } from "@/components/yandex-rsy-scripts";
+
 const geistSans = Geist({
   variable: "--font-geist-sans",
   subsets: ["latin"],
@@ -29,13 +32,16 @@ export default function RootLayout({
       <body
         className={`${geistSans.variable} ${geistMono.variable} min-h-svh bg-background font-sans text-foreground antialiased`}
       >
-        <div className="relative min-h-svh">
-          <div
-            aria-hidden="true"
-            className="pointer-events-none absolute inset-0 -z-10 bg-[radial-gradient(60rem_40rem_at_50%_-10%,hsl(var(--muted))_0%,transparent_60%)]"
-          />
-          {children}
-        </div>
+        <ThemeProvider>
+          <YandexRsyScripts />
+          <div className="relative min-h-svh">
+            <div
+              aria-hidden="true"
+              className="pointer-events-none absolute inset-0 -z-10 bg-app-gradient"
+            />
+            {children}
+          </div>
+        </ThemeProvider>
       </body>
     </html>
   );
