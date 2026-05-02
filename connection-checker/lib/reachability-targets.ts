@@ -7,6 +7,8 @@ export type ReachabilityTarget = {
   id: string;
   label: string;
   region: ReachabilityRegion;
+  /** Подкатегория для белого списка Минцифры (маркетплейсы, банки и т.д.). */
+  category?: string;
   host: string;
   url: string;
   mode: "cors" | "opaque";

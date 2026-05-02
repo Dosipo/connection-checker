@@ -1,6 +1,6 @@
 "use client";
 
-import { Gauge } from "lucide-react";
+import { Gauge, Loader2 } from "lucide-react";
 
 import { Badge } from "@/components/ui/badge";
 import {
@@ -18,6 +18,8 @@ import {
   httpLossQualityLabel,
   qualityLabelVariant,
 } from "@/lib/metrics";
+import { phaseStringToStepIndex } from "@/lib/diagnostic-phase";
+import { cn } from "@/lib/utils";
 
 type ServiceBadgeVariant =
   | "success"
@@ -29,6 +31,7 @@ type ServiceBadgeVariant =
 export function ConnectionQualityCard(props: {
   hasRun: boolean;
   running: boolean;
+  phase: string | null;
   seqSamplesLength: number;
   seqSummary: {
     lossPercent: number;
@@ -42,20 +45,17 @@ export function ConnectionQualityCard(props: {
   burstSummary: { lossPercent: number; failed: number };
   downMainMbps: number | null;
   multipathHint: string | null;
-  stabilityText: string;
-  stabilityVariant: ServiceBadgeVariant;
 }) {
   const {
     hasRun,
     running,
+    phase,
     seqSamplesLength,
     seqSummary,
     burstSamplesLength,
     burstSummary,
     downMainMbps,
     multipathHint,
-    stabilityText,
-    stabilityVariant,
   } = props;
 
   const mainMbps =
@@ -98,22 +98,30 @@ export function ConnectionQualityCard(props: {
       ? httpLossProgressValue(combinedLossPercent)
       : null;
 
+  const phaseIdx = phaseStringToStepIndex(phase);
+  const speedProcessing =
+    running && downMainMbps === null && phaseIdx === 2;
+  const lossProcessing =
+    running && seqSamplesLength === 0 && phaseIdx < 2;
+
   return (
     <Card className="rounded-2xl border-border/70 shadow-sm">
       <CardHeader className="space-y-0 pb-2">
         <CardTitle className="flex items-center gap-2 text-base font-semibold">
           <Gauge className="size-5 shrink-0 text-muted-foreground" aria-hidden />
-          Качество соединения
+          Качество интернета
         </CardTitle>
       </CardHeader>
       <CardContent className="space-y-3 pt-0">
-        <div className="grid gap-5 border-t border-border/50 pt-4 sm:grid-cols-3 sm:gap-6">
+        <div className="grid items-stretch gap-5 pt-3 sm:grid-cols-2 sm:gap-6">
           <MetricBlock
             label="Скорость (CDN)"
             value={mainMbps}
             assessment={speedAssessment}
             badgeVariant={speedBadgeVariant}
             progressValue={speedProgress}
+            processing={speedProcessing}
+            processingDetail={speedProcessing ? phase : null}
           />
           <MetricBlock
             label="Потери HTTP"
@@ -127,23 +135,8 @@ export function ConnectionQualityCard(props: {
             assessment={lossAssessment}
             badgeVariant={lossBadgeVariant}
             progressValue={lossProgress}
-          />
-          <MetricBlock
-            label="Стабильность RTT"
-            value={
-              seqSamplesLength
-                ? String(seqSummary.stabilityScore)
-                : running
-                  ? "…"
-                  : "—"
-            }
-            assessment={seqSamplesLength ? stabilityText : null}
-            badgeVariant={
-              seqSamplesLength ? stabilityVariant : undefined
-            }
-            progressValue={
-              seqSamplesLength ? seqSummary.stabilityScore : null
-            }
+            processing={lossProcessing}
+            processingDetail={lossProcessing ? phase : null}
           />
         </div>
 
@@ -163,32 +156,94 @@ function MetricBlock({
   assessment,
   badgeVariant,
   progressValue,
+  processing,
+  processingDetail,
 }: {
   label: string;
   value: string;
   assessment?: string | null;
   badgeVariant?: ServiceBadgeVariant;
   progressValue?: number | null;
+  processing?: boolean;
+  processingDetail?: string | null;
 }) {
   const showBadge =
     assessment != null && badgeVariant != null;
   const showProgress =
     progressValue != null && Number.isFinite(progressValue);
+
+  if (processing) {
+    return (
+      <div className="flex h-full min-w-0 flex-col">
+        <p className="text-xs leading-snug text-muted-foreground">{label}</p>
+        <div className="mt-1 flex min-h-[3rem] flex-col justify-center gap-2">
+          <div className="flex flex-wrap items-center gap-x-2 gap-y-1">
+            <Loader2
+              className="size-5 shrink-0 animate-spin text-muted-foreground"
+              aria-hidden
+            />
+            <span className="text-sm font-medium text-foreground">
+              Замер…
+            </span>
+          </div>
+          {processingDetail ? (
+            <p
+              className="line-clamp-2 text-[11px] leading-snug text-muted-foreground"
+              title={processingDetail}
+            >
+              {processingDetail}
+            </p>
+          ) : null}
+        </div>
+        <div className="mt-2 h-1 w-full max-w-[12rem] shrink-0">
+          <IndeterminateProgress />
+        </div>
+      </div>
+    );
+  }
+
   return (
-    <div className="min-w-0">
-      <p className="text-xs text-muted-foreground">{label}</p>
-      <div className="mt-1 flex flex-wrap items-center gap-2">
-        <span className="text-2xl font-semibold tabular-nums">{value}</span>
+    <div className="flex h-full min-w-0 flex-col">
+      <p className="text-xs leading-snug text-muted-foreground">{label}</p>
+      <div className="mt-1 flex min-h-[3rem] flex-wrap items-center gap-x-2 gap-y-1">
+        <span className="text-2xl font-semibold leading-none tabular-nums tracking-tight">
+          {value}
+        </span>
         {showBadge ? (
-          <Badge variant={badgeVariant}>{assessment}</Badge>
+          <Badge variant={badgeVariant} className="shrink-0">
+            {assessment}
+          </Badge>
         ) : null}
       </div>
-      {showProgress ? (
-        <Progress
-          className="mt-2 h-1 max-w-[12rem]"
-          value={Math.min(100, Math.max(0, progressValue))}
-        />
-      ) : null}
+      <div className="mt-2 h-1 w-full max-w-[12rem] shrink-0">
+        {showProgress ? (
+          <Progress
+            className="h-1 w-full"
+            value={Math.min(100, Math.max(0, progressValue as number))}
+          />
+        ) : (
+          <div className="h-1 w-full" aria-hidden />
+        )}
+      </div>
+    </div>
+  );
+}
+
+function IndeterminateProgress({ className }: { className?: string }) {
+  return (
+    <div
+      className={cn(
+        "relative h-1 w-full overflow-hidden rounded-full bg-muted",
+        className
+      )}
+      role="progressbar"
+      aria-valuetext="Выполняется"
+      aria-busy="true"
+    >
+      <div
+        className="absolute top-0 h-full w-[38%] rounded-full bg-primary/80 motion-safe:animate-progress-indeterminate motion-reduce:opacity-70"
+        aria-hidden
+      />
     </div>
   );
 }

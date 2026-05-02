@@ -4,6 +4,8 @@ export type ReachabilityResult = {
   id: string;
   label: string;
   region: string;
+  /** Категория из цели (белый список). */
+  category?: string;
   host: string;
   url: string;
   mode: "cors" | "opaque";
@@ -21,6 +23,7 @@ export async function probeReachability(
     id: target.id,
     label: target.label,
     region: target.region,
+    ...(target.category != null ? { category: target.category } : {}),
     host: target.host,
     url: target.url,
     mode: target.mode,
@@ -84,4 +87,55 @@ export async function probeAllReachabilitySequential(
     opts?.onItem?.(row, i, targets.length);
   }
   return out;
+}
+
+/**
+ * Параллельный прогон (или с ограничением конкурентности).
+ * Итоговый массив всегда в том же порядке, что и `targets`.
+ */
+export async function probeAllReachabilityParallel(
+  targets: ReachabilityTarget[],
+  opts?: {
+    timeoutMs?: number;
+    /** Одновременных запросов; без значения — все цели сразу. */
+    concurrency?: number;
+    onItem?: (row: ReachabilityResult, idx: number, total: number) => void;
+  }
+): Promise<ReachabilityResult[]> {
+  const timeoutMs = opts?.timeoutMs ?? DEFAULT_TIMEOUT_MS;
+  const total = targets.length;
+  if (total === 0) return [];
+
+  const conc = opts?.concurrency;
+  const unlimited = conc == null || !Number.isFinite(conc) || conc >= total;
+
+  if (unlimited) {
+    return Promise.all(
+      targets.map((t, idx) =>
+        probeReachability(t, timeoutMs).then((row) => {
+          opts?.onItem?.(row, idx, total);
+          return row;
+        })
+      )
+    );
+  }
+
+  const safeConc = Math.max(1, Math.floor(conc));
+  const results: ReachabilityResult[] = new Array(total);
+  let next = 0;
+
+  async function worker() {
+    for (;;) {
+      const i = next++;
+      if (i >= total) return;
+      const row = await probeReachability(targets[i], timeoutMs);
+      results[i] = row;
+      opts?.onItem?.(row, i, total);
+    }
+  }
+
+  await Promise.all(
+    Array.from({ length: Math.min(safeConc, total) }, () => worker())
+  );
+  return results;
 }

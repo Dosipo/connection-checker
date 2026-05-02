@@ -1,12 +1,13 @@
 /** Индекс этапа по `phase` (-1 если не распознано); порядок как у STEPS в diagnostic-timeline. */
 export function phaseStringToStepIndex(phase: string | null): number {
   if (!phase) return -1;
-  if (phase.includes("Сброс")) return 0;
-  if (phase.includes("Последовательный RTT")) return 0;
-  if (phase.includes("burst")) return 1;
-  if (phase.includes("https downlink") || phase.includes("jsdelivr")) return 2;
-  if (phase.includes("доступность хостов")) return 3;
-  if (phase.includes("белый список")) return 4;
+  const p = phase.toLowerCase();
+  if (p.includes("сброс")) return 0;
+  if (p.includes("последовательный rtt")) return 0;
+  if (p.includes("burst")) return 1;
+  if (p.includes("https downlink") || p.includes("jsdelivr")) return 2;
+  if (p.includes("доступность хостов")) return 3;
+  if (p.includes("белый список")) return 4;
   return -1;
 }
 

@@ -52,17 +52,14 @@ import {
 } from "@/lib/connection-measure";
 import { REACHABILITY_TARGETS } from "@/lib/reachability-targets";
 import {
+  probeAllReachabilityParallel,
   probeAllReachabilitySequential,
   type ReachabilityResult,
 } from "@/lib/reachability";
 import {
   WHITE_LIST_REACHABILITY_TARGETS,
 } from "@/lib/whitelist-reachability-targets";
-import {
-  stabilityLabel,
-  summarizePings,
-  type PingSample,
-} from "@/lib/metrics";
+import { summarizePings, type PingSample } from "@/lib/metrics";
 import { phaseStringToStepIndex } from "@/lib/diagnostic-phase";
 import { cn } from "@/lib/utils";
 
@@ -71,6 +68,11 @@ const reachRowEnter =
   "motion-safe:animate-reach-row-in motion-reduce:animate-none";
 
 const RUN_PROGRESS_TOTAL = SEQ_PINGS + 1 + 1 + 1 + 1;
+
+/** Одновременные пробы разных хостов белого списка (ускоряет этап без лишней нагрузки на один origin). */
+const WHITE_LIST_PROBE_CONCURRENCY = 8;
+/** Короче общего таймаута: маленькие favicon / no-cors. */
+const WHITE_LIST_PROBE_TIMEOUT_MS = 12_000;
 
 function TableSkeletonRows({ rows, cols }: { rows: number; cols: number }) {
   const widths =
@@ -130,7 +132,6 @@ export function ConnectionDashboard() {
     ReachabilityResult[]
   >([]);
 
-  const [lastCompletedAt, setLastCompletedAt] = useState<number | null>(null);
   const [completedFullRun, setCompletedFullRun] = useState(false);
   const [partialMaxIndex, setPartialMaxIndex] = useState(-1);
 
@@ -140,16 +141,6 @@ export function ConnectionDashboard() {
     [burstSamples]
   );
   const hasRun = seqSamples.length > 0;
-
-  const stabilityText = stabilityLabel(seqSummary.stabilityScore);
-  const stabilityVariant =
-    seqSummary.stabilityScore >= 85
-      ? "success"
-      : seqSummary.stabilityScore >= 65
-        ? "secondary"
-        : seqSummary.stabilityScore >= 45
-          ? "warning"
-          : "destructive";
 
   const multipathHint = useMemo(() => {
     if (downMainMbps == null || downParallelMbps == null) return null;
@@ -182,12 +173,6 @@ export function ConnectionDashboard() {
   }, []);
 
   const whitelistTargetTotal = WHITE_LIST_REACHABILITY_TARGETS.length;
-
-  const whitelistByRegion = useMemo(() => {
-    const xs = whitelistReachability;
-    const ok = xs.filter((x) => x.ok).length;
-    return { ok, total: xs.length };
-  }, [whitelistReachability]);
 
   useEffect(() => {
     if (!running || !phase) return;
@@ -257,12 +242,23 @@ export function ConnectionDashboard() {
 
       setPhase("Белый список Минцифры: HTTP-пробы…");
       setWhitelistReachability([]);
-      const wlReach = await probeAllReachabilitySequential(
+      let wlDone = 0;
+      const wlTotal = WHITE_LIST_REACHABILITY_TARGETS.length;
+      const wlReach = await probeAllReachabilityParallel(
         WHITE_LIST_REACHABILITY_TARGETS,
         {
-          onItem: (row, idx, total) => {
-            setWhitelistReachability((prev) => [...prev, row]);
-            setPhase(`Белый список Минцифры: ${idx + 1} / ${total}`);
+          timeoutMs: WHITE_LIST_PROBE_TIMEOUT_MS,
+          concurrency: WHITE_LIST_PROBE_CONCURRENCY,
+          onItem: (row) => {
+            wlDone++;
+            setPhase(`Белый список Минцифры: ${wlDone} / ${wlTotal}`);
+            setWhitelistReachability((prev) => {
+              const byId = new Map(prev.map((r) => [r.id, r]));
+              byId.set(row.id, row);
+              return WHITE_LIST_REACHABILITY_TARGETS.map((t) => byId.get(t.id)).filter(
+                (r): r is ReachabilityResult => r !== undefined
+              );
+            });
           },
         }
       );
@@ -276,7 +272,6 @@ export function ConnectionDashboard() {
       }
 
       setCompletedFullRun(true);
-      setLastCompletedAt(Date.now());
       setPartialMaxIndex(4);
       setPhase(null);
     } catch (e) {
@@ -327,18 +322,20 @@ export function ConnectionDashboard() {
             <ThemeToggle className="shrink-0" />
           </div>
           <p className="text-center text-xs leading-snug text-muted-foreground sm:text-sm">
-            Задержки, скорость загрузки и доступность сайтов из браузера.
+            Онлайн-проверка интернета без установки программ: задержки и потери
+            HTTP(S), скорость по HTTPS, доступность сайтов и перечень Минцифры —
+            прямо из браузера.
           </p>
           <YandexRtbSlot
             blockId={yandexHeaderBlock}
             compact
             className="mx-auto w-full max-w-xl"
           />
-          <div className="flex flex-col items-center gap-2">
+          <div className="flex w-full flex-col gap-2">
             <Button
               onClick={run}
               disabled={running}
-              className="h-11 w-full max-w-sm gap-2 px-6 text-base"
+              className="h-11 w-full gap-2 px-6 text-base"
             >
               {running ? (
                 <Loader2 className="size-4 animate-spin" aria-hidden />
@@ -356,10 +353,7 @@ export function ConnectionDashboard() {
         <ThemeToggle className="shrink-0" />
       </div>
       <div className="flex flex-col items-stretch gap-4 sm:gap-5 lg:flex-row lg:items-start lg:justify-center lg:gap-6">
-        <DiagnosticSummaryCard
-          className="min-w-0 w-full lg:flex-1"
-          lastCompletedAt={lastCompletedAt}
-        />
+        <DiagnosticSummaryCard className="min-w-0 w-full lg:flex-1" />
         <YandexRtbSlot
           blockId={yandexHeaderBlock}
           compact
@@ -370,14 +364,13 @@ export function ConnectionDashboard() {
       <ConnectionQualityCard
         hasRun={hasRun}
         running={running}
+        phase={phase}
         seqSamplesLength={seqSamples.length}
         seqSummary={seqSummary}
         burstSamplesLength={burstSamples.length}
         burstSummary={burstSummary}
         downMainMbps={downMainMbps}
         multipathHint={multipathHint}
-        stabilityText={stabilityText}
-        stabilityVariant={stabilityVariant}
       />
 
       <DiagnosticTimeline
@@ -388,34 +381,11 @@ export function ConnectionDashboard() {
       />
 
       <div className="flex min-w-0 w-full flex-col gap-5">
-      <header className="w-full space-y-3">
-        <div className="flex flex-col gap-3 sm:flex-row sm:items-center sm:justify-between">
-        <div className="min-w-0 space-y-2">
-          <div className="flex flex-wrap items-center justify-between gap-2">
-            <h2 className="flex min-w-0 items-center gap-2 text-lg font-semibold tracking-tight">
-              <Wifi className="size-6 shrink-0 text-muted-foreground" aria-hidden />
-              <span className="leading-tight">Результаты</span>
-            </h2>
-          </div>
-          <div className="flex flex-wrap items-center gap-2 pt-0.5">
-            <Button
-              type="button"
-              variant="outline"
-              size="sm"
-              className="gap-2"
-              onClick={run}
-              disabled={running}
-            >
-              {running ? (
-                <Loader2 className="size-3.5 animate-spin" aria-hidden />
-              ) : (
-                <RefreshCw className="size-3.5" aria-hidden />
-              )}
-              {running ? "Диагностика…" : "Полная диагностика"}
-            </Button>
-          </div>
-        </div>
-        </div>
+      <header className="w-full">
+        <h2 className="flex min-w-0 items-center gap-2 text-lg font-semibold tracking-tight">
+          <Wifi className="size-6 shrink-0 text-muted-foreground" aria-hidden />
+          <span className="leading-tight">Результаты</span>
+        </h2>
       </header>
 
       {error ? (
@@ -560,31 +530,18 @@ export function ConnectionDashboard() {
         </CardContent>
       </Card>
 
-      <Card className="border-primary/20">
+      <Card>
         <CardHeader className="pb-2">
           <CardTitle className="text-base leading-tight">
             Белый список Минцифры
           </CardTitle>
-          <div className="min-h-[1.25rem] pt-2 text-xs text-muted-foreground">
-            {whitelistReachability.length > 0 ? (
-              <>
-                OK:{" "}
-                <span className="font-medium text-foreground">
-                  {whitelistByRegion.ok}/{whitelistByRegion.total}
-                </span>
-              </>
-            ) : running && reachability.length > 0 ? (
-              <span className="text-muted-foreground/80">Подсчёт…</span>
-            ) : (
-              "\u00A0"
-            )}
-          </div>
         </CardHeader>
         <CardContent>
-          <Table className="min-w-[440px]">
+          <Table className="min-w-[560px]">
             <TableHeader>
               <TableRow className="hover:bg-transparent">
-                <TableHead className="pl-0">Сервис</TableHead>
+                <TableHead className="pl-0">Категория</TableHead>
+                <TableHead>Сервис</TableHead>
                 <TableHead>Адрес</TableHead>
                 <TableHead>Статус</TableHead>
                 <TableHead>Время (мс)</TableHead>
@@ -598,7 +555,10 @@ export function ConnectionDashboard() {
                       key={row.id}
                       className={cn("border-border/60", reachRowEnter)}
                     >
-                      <TableCell className="pl-0 align-top">{row.label}</TableCell>
+                      <TableCell className="max-w-[11rem] pl-0 align-top text-xs text-muted-foreground">
+                        {row.category ?? "—"}
+                      </TableCell>
+                      <TableCell className="align-top">{row.label}</TableCell>
                       <TableCell className="max-w-[140px] truncate align-top font-mono text-xs">
                         {row.host}
                       </TableCell>
@@ -625,15 +585,15 @@ export function ConnectionDashboard() {
                   {running && whitelistReachability.length < whitelistTargetTotal ? (
                     <TableSkeletonRows
                       rows={whitelistTargetTotal - whitelistReachability.length}
-                      cols={4}
+                      cols={5}
                     />
                   ) : null}
                 </>
               ) : running ? (
-                <TableSkeletonRows rows={Math.min(8, whitelistTargetTotal)} cols={4} />
+                <TableSkeletonRows rows={Math.min(8, whitelistTargetTotal)} cols={5} />
               ) : (
                 <TableRow className="hover:bg-transparent">
-                  <TableCell colSpan={4} className="py-10">
+                  <TableCell colSpan={5} className="py-10">
                     <Empty className="border-0 p-4">
                       <EmptyHeader>
                         <EmptyTitle>Нет данных</EmptyTitle>
