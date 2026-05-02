@@ -1,12 +1,14 @@
 export type ReachabilityRegion =
   | "Россия"
-  | "Зарубеж"
+  | "Зарубежные сайты"
   | "Белый список";
 
 export type ReachabilityTarget = {
   id: string;
   label: string;
   region: ReachabilityRegion;
+  /** Подкатегория для белого списка Минцифры (маркетплейсы, банки и т.д.). */
+  category?: string;
   host: string;
   url: string;
   mode: "cors" | "opaque";
@@ -54,17 +56,9 @@ export const REACHABILITY_TARGETS: ReachabilityTarget[] = [
     mode: "opaque",
   },
   {
-    id: "rambler",
-    label: "Rambler",
-    region: "Россия",
-    host: "rambler.ru",
-    url: "https://www.rambler.ru/favicon.ico",
-    mode: "opaque",
-  },
-  {
     id: "google-204",
     label: "Google",
-    region: "Зарубеж",
+    region: "Зарубежные сайты",
     host: "google.com",
     url: "https://www.google.com/generate_204",
     mode: "opaque",
@@ -72,7 +66,7 @@ export const REACHABILITY_TARGETS: ReachabilityTarget[] = [
   {
     id: "cloudflare",
     label: "Cloudflare",
-    region: "Зарубеж",
+    region: "Зарубежные сайты",
     host: "cloudflare.com",
     url: "https://www.cloudflare.com/favicon.ico",
     mode: "opaque",
@@ -80,7 +74,7 @@ export const REACHABILITY_TARGETS: ReachabilityTarget[] = [
   {
     id: "github",
     label: "GitHub API",
-    region: "Зарубеж",
+    region: "Зарубежные сайты",
     host: "api.github.com",
     url: "https://api.github.com/zen",
     mode: "cors",
@@ -88,7 +82,7 @@ export const REACHABILITY_TARGETS: ReachabilityTarget[] = [
   {
     id: "wikipedia",
     label: "Wikipedia",
-    region: "Зарубеж",
+    region: "Зарубежные сайты",
     host: "wikipedia.org",
     url: "https://www.wikipedia.org/static/favicon/wikipedia.ico",
     mode: "opaque",
@@ -96,7 +90,7 @@ export const REACHABILITY_TARGETS: ReachabilityTarget[] = [
   {
     id: "microsoft",
     label: "Microsoft",
-    region: "Зарубеж",
+    region: "Зарубежные сайты",
     host: "microsoft.com",
     url: "https://www.microsoft.com/favicon.ico",
     mode: "opaque",

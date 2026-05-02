@@ -1,0 +1,17 @@
+# deps / build
+node_modules
+.next
+out
+
+# git / dev
+.git
+.gitignore
+*.log
+.env
+.env.*
+
+# IDE / OS
+.vscode
+.idea
+.DS_Store
+Thumbs.db
