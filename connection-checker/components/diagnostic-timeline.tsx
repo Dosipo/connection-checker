@@ -4,7 +4,7 @@ import {
   Activity,
   CloudDownload,
   Globe,
-  ListChecks,
+  Loader2,
   ShieldCheck,
   Zap,
 } from "lucide-react";
@@ -12,7 +12,6 @@ import {
 import { Badge } from "@/components/ui/badge";
 import { cn } from "@/lib/utils";
 import {
-  diagnosticStepCount,
   getStepVisualState,
   type StepVisualState,
 } from "@/lib/diagnostic-phase";
@@ -43,11 +42,6 @@ const STEPS: { title: string; subtitle: string; icon: typeof Activity }[] = [
     subtitle: "Категории из перечня",
     icon: ShieldCheck,
   },
-  {
-    title: "Сводка для сисадминов",
-    subtitle: "DoH, часы, WebRTC",
-    icon: ListChecks,
-  },
 ];
 
 function StepIcon({
@@ -73,6 +67,38 @@ function StepIcon({
   );
 }
 
+function StepStatusBadge({ state }: { state: StepVisualState }) {
+  if (state === "done") {
+    return (
+      <Badge
+        variant="success"
+        className="shrink-0 rounded-full border-transparent px-2.5 py-0.5 text-[11px] font-semibold"
+      >
+        ОК
+      </Badge>
+    );
+  }
+  if (state === "active") {
+    return (
+      <Badge
+        variant="secondary"
+        className="shrink-0 gap-1 rounded-full px-2.5 py-0.5 text-[11px] font-medium"
+      >
+        <Loader2 className="size-3 shrink-0 animate-spin" aria-hidden />
+        В процессе
+      </Badge>
+    );
+  }
+  return (
+    <Badge
+      variant="outline"
+      className="shrink-0 rounded-full border-border/80 px-2.5 py-0.5 text-[11px] font-normal text-muted-foreground"
+    >
+      Ожидание
+    </Badge>
+  );
+}
+
 export function DiagnosticTimeline(props: {
   running: boolean;
   phase: string | null;
@@ -80,7 +106,7 @@ export function DiagnosticTimeline(props: {
   partialMaxIndex: number;
 }) {
   const { running, phase, completedFullRun, partialMaxIndex } = props;
-  const n = diagnosticStepCount();
+  const n = STEPS.length;
 
   return (
     <section
@@ -122,7 +148,14 @@ export function DiagnosticTimeline(props: {
           const Icon = step.icon;
           const isLast = i === n - 1;
           return (
-            <li key={step.title} className="relative flex gap-3 pb-6 last:pb-0">
+            <li
+              key={step.title}
+              className={cn(
+                "relative flex gap-3 pb-6 last:pb-0",
+                "motion-safe:animate-reach-row-in motion-reduce:animate-none"
+              )}
+              style={{ animationDelay: `${Math.min(i, 14) * 32}ms` }}
+            >
               {!isLast ? (
                 <span
                   className="absolute left-[1.125rem] top-10 block w-px -translate-x-1/2 bg-border"
@@ -132,17 +165,11 @@ export function DiagnosticTimeline(props: {
               ) : null}
               <StepIcon state={state} Icon={Icon} />
               <div className="min-w-0 flex-1 pt-0.5">
-                <div className="flex flex-wrap items-baseline justify-between gap-x-2 gap-y-0.5">
+                <div className="flex flex-wrap items-center justify-between gap-x-2 gap-y-1">
                   <p className="font-semibold leading-snug text-foreground">
                     {step.title}
                   </p>
-                  <span className="shrink-0 text-[11px] tabular-nums text-muted-foreground">
-                    {state === "done"
-                      ? "OK"
-                      : state === "active"
-                        ? "…"
-                        : "—"}
-                  </span>
+                  <StepStatusBadge state={state} />
                 </div>
                 <p className="mt-0.5 text-xs leading-snug text-muted-foreground">
                   {state === "active" && running && phase

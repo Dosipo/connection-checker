@@ -1,17 +1,12 @@
-const STEP_COUNT = 6;
-
-/** Индекс этапа по тексту `phase` из сценария; -1 если не распознано. */
+/** Индекс этапа по `phase` (-1 если не распознано); порядок как у STEPS в diagnostic-timeline. */
 export function phaseStringToStepIndex(phase: string | null): number {
   if (!phase) return -1;
-  const p = phase.toLowerCase();
   if (phase.includes("Сброс")) return 0;
   if (phase.includes("Последовательный RTT")) return 0;
   if (phase.includes("burst")) return 1;
   if (phase.includes("https downlink") || phase.includes("jsdelivr")) return 2;
   if (phase.includes("доступность хостов")) return 3;
   if (phase.includes("белый список")) return 4;
-  if (p.includes("сисадмин") || phase.includes("doh") || phase.includes("webrtc"))
-    return 5;
   return -1;
 }
 
@@ -47,8 +42,4 @@ export function getStepVisualState(
   }
 
   return "pending";
-}
-
-export function diagnosticStepCount(): number {
-  return STEP_COUNT;
 }

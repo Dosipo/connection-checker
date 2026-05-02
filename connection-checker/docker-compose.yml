@@ -1,0 +1,18 @@
+# Важно: `docker restart` / `docker compose restart` НЕ пересобирают образ.
+# После правок в коде выполните пересборку, иначе в контейнере останется старый `next build`:
+#   docker compose up --build -d
+#   npm run docker:rebuild
+#
+# Сборка из корня пакета (папка connection-checker):
+#   cd connection-checker && docker compose up --build -d
+services:
+  web:
+    build:
+      context: .
+      dockerfile: Dockerfile
+    image: connection-checker:local
+    ports:
+      - "3000:3000"
+    restart: unless-stopped
+    environment:
+      NODE_ENV: production

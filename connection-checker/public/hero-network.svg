@@ -1,0 +1,20 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 480 200" fill="none" role="img" aria-hidden="true">
+  <defs>
+    <linearGradient id="bg" x1="0" y1="0" x2="480" y2="200" gradientUnits="userSpaceOnUse">
+      <stop stop-color="#6366f1" stop-opacity="0.18"/>
+      <stop offset="0.5" stop-color="#8b5cf6" stop-opacity="0.12"/>
+      <stop offset="1" stop-color="#0ea5e9" stop-opacity="0.15"/>
+    </linearGradient>
+    <linearGradient id="pulse" x1="240" y1="120" x2="240" y2="40" gradientUnits="userSpaceOnUse">
+      <stop stop-color="#6366f1" stop-opacity="0.45"/>
+      <stop offset="1" stop-color="#6366f1" stop-opacity="0"/>
+    </linearGradient>
+  </defs>
+  <rect width="480" height="200" rx="16" fill="url(#bg)"/>
+  <ellipse cx="240" cy="140" rx="140" ry="28" fill="url(#pulse)"/>
+  <path d="M240 52c-22 0-42 8-57 21l12 14c12-11 28-17 45-17s33 6 45 17l12-14c-15-13-35-21-57-21z" fill="#6366f1" fill-opacity="0.35"/>
+  <path d="M240 72c-16 0-30 6-41 15l11 13c8-7 19-11 30-11s22 4 30 11l11-13c-11-9-25-15-41-15z" fill="#6366f1" fill-opacity="0.55"/>
+  <path d="M240 92c-10 0-19 4-26 10l10 12c4-4 10-6 16-6s12 2 16 6l10-12c-7-6-16-10-26-10z" fill="#6366f1" fill-opacity="0.75"/>
+  <circle cx="240" cy="118" r="10" fill="#4f46e5"/>
+  <circle cx="240" cy="118" r="4" fill="white" fill-opacity="0.9"/>
+</svg>

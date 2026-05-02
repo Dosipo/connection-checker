@@ -121,11 +121,48 @@ export function formatMbps(bitsPerSecond: number) {
   return `${Math.round(bitsPerSecond)} бит/с`;
 }
 
-export function stabilityLabel(
-  score: number
-): "отлично" | "хорошо" | "слабо" | "плохо" {
+export type QualityLabel = "отлично" | "хорошо" | "слабо" | "плохо";
+
+export function stabilityLabel(score: number): QualityLabel {
   if (score >= 85) return "отлично";
   if (score >= 65) return "хорошо";
   if (score >= 45) return "слабо";
   return "плохо";
+}
+
+export function qualityLabelVariant(
+  label: QualityLabel
+): "success" | "secondary" | "warning" | "destructive" {
+  if (label === "отлично") return "success";
+  if (label === "хорошо") return "secondary";
+  if (label === "слабо") return "warning";
+  return "destructive";
+}
+
+/** Оценка скорости по основному HTTPS-замеру (Мбит/с). */
+export function downlinkQualityLabel(mbps: number): QualityLabel {
+  if (mbps >= 50) return "отлично";
+  if (mbps >= 25) return "хорошо";
+  if (mbps >= 10) return "слабо";
+  return "плохо";
+}
+
+/**
+ * Оценка потерь HTTP: учитывайте худший из долей (последовательный ряд и burst).
+ */
+export function httpLossQualityLabel(lossPercent: number): QualityLabel {
+  if (lossPercent <= 0) return "отлично";
+  if (lossPercent < 2) return "хорошо";
+  if (lossPercent < 12) return "слабо";
+  return "плохо";
+}
+
+/** 0–100 для полосы: чем выше скорость, тем полнее (100 Мбит/с ≈ максимум). */
+export function downlinkProgressValue(mbps: number): number {
+  return Math.round(Math.min(100, Math.max(0, (mbps / 100) * 100)));
+}
+
+/** 0–100: чем меньше потерь, тем полнее. */
+export function httpLossProgressValue(lossPercent: number): number {
+  return Math.round(Math.min(100, Math.max(0, 100 - lossPercent)));
 }
