@@ -14,9 +14,9 @@ const geistMono = Geist_Mono({
 });
 
 export const metadata: Metadata = {
-  title: "Диагностика HTTP/HTTPS",
+  title: "Диагностика состояния сети",
   description:
-    "HTTP-задержка и стабильность, скорость HTTPS-загрузки с CDN, доступность хостов из браузера",
+    "Оценка сети из браузера (HTTP/HTTPS): задержки, стабильность, скорость по HTTPS, доступность хостов и расширенные проверки для поддержки",
 };
 
 export default function RootLayout({
@@ -27,9 +27,15 @@ export default function RootLayout({
   return (
     <html lang="ru" suppressHydrationWarning>
       <body
-        className={`${geistSans.variable} ${geistMono.variable} min-h-svh font-sans`}
+        className={`${geistSans.variable} ${geistMono.variable} min-h-svh bg-background font-sans text-foreground antialiased`}
       >
-        {children}
+        <div className="relative min-h-svh">
+          <div
+            aria-hidden="true"
+            className="pointer-events-none absolute inset-0 -z-10 bg-[radial-gradient(60rem_40rem_at_50%_-10%,hsl(var(--muted))_0%,transparent_60%)]"
+          />
+          {children}
+        </div>
       </body>
     </html>
   );

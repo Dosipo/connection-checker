@@ -46,11 +46,16 @@ export async function GET(request: NextRequest) {
       ipv6,
       /** `loopback` — в заголовке был только localhost/::1, публичного адреса нет */
       source: meaningful ? "proxy" : "loopback",
+      /** Время сервера (смещение часов клиента — для тикетов и TLS) */
+      serverTimeMs: Date.now(),
+      serverTimeIso: new Date().toISOString(),
     });
   }
   return NextResponse.json({
     ipv4: null,
     ipv6: null,
     source: "local",
+    serverTimeMs: Date.now(),
+    serverTimeIso: new Date().toISOString(),
   });
 }

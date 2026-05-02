@@ -3,21 +3,43 @@
 import { useCallback, useMemo, useState } from "react";
 import {
   Activity,
+  AlertCircle,
+  Check,
   Download,
   Gauge,
   Globe,
   Loader2,
   Network,
   RefreshCw,
+  Server,
   ShieldCheck,
   Wifi,
+  X,
 } from "lucide-react";
 
 import { DeviceInfoPanel } from "@/components/device-info-panel";
 import { InfoTip } from "@/components/info-tip";
+import { Alert, AlertDescription, AlertTitle } from "@/components/ui/alert";
+import {
+  Accordion,
+  AccordionContent,
+  AccordionItem,
+  AccordionTrigger,
+} from "@/components/ui/accordion";
 import { Badge } from "@/components/ui/badge";
 import { Button } from "@/components/ui/button";
+import { Empty } from "@/components/ui/empty";
 import { Skeleton } from "@/components/ui/skeleton";
+import { Separator } from "@/components/ui/separator";
+import {
+  Table,
+  TableBody,
+  TableCell,
+  TableHead,
+  TableHeader,
+  TableRow,
+} from "@/components/ui/table";
+import { Tabs, TabsContent, TabsList, TabsTrigger } from "@/components/ui/tabs";
 import {
   Card,
   CardContent,
@@ -49,10 +71,40 @@ import {
   summarizePings,
   type PingSample,
 } from "@/lib/metrics";
+import {
+  runSysadminDiagnostics,
+  type SysadminDiagnostics,
+} from "@/lib/sysadmin-diagnostics";
 
 const PARALLEL_CHUNKS = EXTERNAL_SPEED_PARALLEL_URLS.length;
 
-const RUN_PROGRESS_TOTAL = SEQ_PINGS + 1 + 1 + 1 + 1;
+const RUN_PROGRESS_TOTAL = SEQ_PINGS + 1 + 1 + 1 + 1 + 1;
+
+function formatNavigatorNetLine(n: SysadminDiagnostics["navigatorNet"]): string {
+  if (!n) return "н/д (Network Information API недоступен)";
+  const parts: string[] = [];
+  if (n.effectiveType) parts.push(`effectiveType: ${n.effectiveType}`);
+  if (n.downlinkMbps != null) parts.push(`downlink ≈ ${n.downlinkMbps} Мбит/с`);
+  if (n.rttMs != null) parts.push(`rtt ≈ ${n.rttMs} мс (эвристика браузера)`);
+  if (n.saveData === true) parts.push("включена экономия трафика");
+  return parts.length ? parts.join(" · ") : "объект есть, полей нет";
+}
+
+function formatDohLine(d: SysadminDiagnostics["dohCloudflare"]): string {
+  if (d.ok && d.latencyMs != null) return `OK, ~${d.latencyMs} мс`;
+  return [d.error ?? "ошибка", d.httpStatus != null ? `HTTP ${d.httpStatus}` : ""]
+    .filter(Boolean)
+    .join(" · ");
+}
+
+function SysadminRow({ label, value }: { label: string; value: string }) {
+  return (
+    <div className="grid gap-1 py-3 sm:grid-cols-[minmax(0,12rem)_1fr] sm:gap-4">
+      <dt className="text-muted-foreground">{label}</dt>
+      <dd className="min-w-0 break-words text-foreground">{value}</dd>
+    </div>
+  );
+}
 
 function TableSkeletonRows({ rows, cols }: { rows: number; cols: number }) {
   const widths = ["w-14", "w-36", "w-28", "w-12", "w-14"];
@@ -90,6 +142,9 @@ export function ConnectionDashboard() {
   const [whitelistReachability, setWhitelistReachability] = useState<
     ReachabilityResult[]
   >([]);
+  const [sysadminReport, setSysadminReport] =
+    useState<SysadminDiagnostics | null>(null);
+  const [sysadminError, setSysadminError] = useState<string | null>(null);
 
   const seqSummary = useMemo(() => summarizePings(seqSamples), [seqSamples]);
   const burstSummary = useMemo(
@@ -149,6 +204,42 @@ export function ConnectionDashboard() {
   }, []);
 
   const whitelistTargetTotal = WHITE_LIST_REACHABILITY_TARGETS.length;
+
+  const tabConnectionLoading = useMemo(
+    () => running && reachability.length < reachabilityTargetTotals.total,
+    [running, reachability.length, reachabilityTargetTotals.total]
+  );
+
+  const tabWhitelistLoading = useMemo(
+    () => running && whitelistReachability.length < whitelistTargetTotal,
+    [running, whitelistReachability.length, whitelistTargetTotal]
+  );
+
+  const tabSysadminLoading = useMemo(
+    () => running && sysadminReport == null && sysadminError == null,
+    [running, sysadminReport, sysadminError]
+  );
+
+  const tabConnectionSuccess = useMemo(
+    () =>
+      !running &&
+      hasStarted &&
+      reachability.length >= reachabilityTargetTotals.total,
+    [running, hasStarted, reachability.length, reachabilityTargetTotals.total]
+  );
+
+  const tabWhitelistSuccess = useMemo(
+    () =>
+      !running &&
+      hasStarted &&
+      whitelistReachability.length >= whitelistTargetTotal,
+    [running, hasStarted, whitelistReachability.length, whitelistTargetTotal]
+  );
+
+  const tabSysadminSuccess = useMemo(
+    () => !running && hasStarted && sysadminReport != null,
+    [running, hasStarted, sysadminReport]
+  );
 
   const whitelistByRegion = useMemo(() => {
     const xs = whitelistReachability;
@@ -231,6 +322,8 @@ export function ConnectionDashboard() {
     setDownParallelMbps(null);
     setReachability([]);
     setWhitelistReachability([]);
+    setSysadminReport(null);
+    setSysadminError(null);
 
     let progressDone = 0;
     const tickProgress = () => {
@@ -290,6 +383,20 @@ export function ConnectionDashboard() {
       setWhitelistReachability(wlReach);
       tickProgress();
 
+      try {
+        setPhase("Сводка для сисадминов: DoH, часы, WebRTC…");
+        const sys = await runSysadminDiagnostics();
+        setSysadminReport(sys);
+      } catch (e) {
+        setSysadminError(
+          e instanceof Error
+            ? e.message
+            : "Не удалось собрать сводку для сисадминов"
+        );
+        setSysadminReport(null);
+      }
+      tickProgress();
+
       if (collected.every((c) => !c.ok)) {
         setError(
           "Все HTTP-пробы к внешним точкам завершились ошибкой. Проверьте DNS, маршрут, VPN/прокси, корпоративный фаервол и блокировщики — они могут резать TLS или HTTP."
@@ -312,39 +419,60 @@ export function ConnectionDashboard() {
 
   return (
     <TooltipProvider delayDuration={200}>
-    <div className="mx-auto flex max-w-4xl flex-col gap-6 px-4 py-10">
-      <header className="space-y-3">
-        <div className="space-y-3">
-          <h1 className="flex items-center gap-1 text-2xl font-semibold tracking-tight sm:gap-2">
+    <div
+      className={
+        hasStarted
+          ? "mx-auto flex max-w-4xl flex-col gap-6 px-4 py-10"
+          : "flex min-h-dvh flex-col items-center justify-center px-4 py-10"
+      }
+    >
+      {!hasStarted ? (
+      <header className="w-full max-w-xl space-y-4 text-center">
+        <div className="space-y-4 rounded-2xl border border-border/70 bg-card/60 p-6 shadow-sm backdrop-blur-sm sm:p-8">
+          <h1 className="flex flex-wrap items-center justify-center gap-2 text-2xl font-semibold tracking-tight sm:gap-3">
             <Wifi className="size-7 shrink-0" aria-hidden />
-            <span className="min-w-0 flex-1 leading-tight">
-              Диагностика HTTP/HTTPS
+            <span className="min-w-0 leading-tight">
+              Диагностика состояния сети
             </span>
-            <InfoTip
-              label="Методика страницы"
-              className="self-start sm:self-center"
+          </h1>
+          <p className="mx-auto max-w-2xl text-sm text-muted-foreground">
+            Снимок из браузера по HTTP/HTTPS: задержки и стабильность
+            запросов, скорость по HTTPS, доступность хостов — переключайте разделы
+            под статусами.
+          </p>
+          <div className="flex flex-col items-center gap-2">
+            <Button
+              onClick={run}
+              disabled={running}
+              className="h-12 gap-2 px-6 text-base sm:min-w-64"
             >
-              <p>
-                Все замеры — обычные{" "}
-                <span className="font-medium text-foreground">fetch</span> из
-                вкладки: последовательный и параллельный HTTP RTT к ротируемым
-                внешним URL, затем HTTPS downlink с публичного CDN (файлы по
-                CORS).
-              </p>
-              <p>
-                Ниже — отдельные HTTP(S)-пробы до выбранных хостов (Россия /
-                зарубежные сайты) и к типовым ресурсам из публикаций Минцифры. Это не ICMP
-                ping: в браузере доступен только стек TLS + HTTP.
-              </p>
-              <p>
-                Итог зависит от маршрута, прокси/VPN, фильтров и расширений и не
-                обязан совпадать с «тарифной» скоростью провайдера.
-              </p>
-            </InfoTip>
+              {running ? (
+                <Loader2 className="size-4 animate-spin" aria-hidden />
+              ) : (
+                <RefreshCw className="size-4" aria-hidden />
+              )}
+              {running ? "Выполняется сценарий…" : "Полная диагностика"}
+            </Button>
+            <p className="min-h-[2.75rem] max-w-[22rem] text-center text-xs leading-snug text-muted-foreground">
+              {running ? "\u00A0" : (phase ?? "\u00A0")}
+            </p>
+          </div>
+        </div>
+      </header>
+      ) : (
+      <Tabs defaultValue="connection" className="flex w-full flex-col gap-6">
+      <header className="w-full space-y-3">
+        <div className="space-y-3">
+          <h1 className="flex items-center gap-2 text-2xl font-semibold tracking-tight sm:gap-3">
+            <Wifi className="size-7 shrink-0" aria-hidden />
+            <span className="min-w-0 leading-tight">
+              Диагностика состояния сети
+            </span>
           </h1>
           <p className="max-w-2xl text-sm text-muted-foreground">
-            HTTP-задержка и потери, throughput по HTTPS, доступность хостов.
-            У блоков — иконка «i» с пояснениями.
+            Снимок из браузера по HTTP/HTTPS: задержки и стабильность
+            запросов, скорость по HTTPS, доступность хостов — переключайте разделы
+            под статусами.
           </p>
           <div className="flex flex-col items-center gap-2 sm:items-start">
             <Button
@@ -363,76 +491,131 @@ export function ConnectionDashboard() {
               {running ? "\u00A0" : (phase ?? "\u00A0")}
             </p>
           </div>
-          {hasStarted ? (
-            <div
-              className="flex flex-wrap items-center gap-2 pt-2"
-              role="list"
-              aria-label="Статус HTTP RTT и downlink"
+          <div
+            className="flex flex-wrap items-center gap-2 pt-2"
+            role="list"
+            aria-label="Статус HTTP RTT и downlink"
+          >
+            <Badge
+              variant={apiServiceBadge.variant}
+              className="gap-1 font-medium"
+              role="listitem"
             >
-              <Badge
-                variant={apiServiceBadge.variant}
-                className="gap-1 font-medium"
-                role="listitem"
-              >
-                <Globe className="size-3.5 opacity-90" aria-hidden />
-                {apiServiceBadge.text}
-              </Badge>
-              <Badge
-                variant={downlinkBadge.variant}
-                className="gap-1 font-medium"
-                role="listitem"
-              >
-                <Download className="size-3.5 opacity-90" aria-hidden />
-                {downlinkBadge.text}
-              </Badge>
-            </div>
-          ) : null}
+              <Globe className="size-3.5 opacity-90" aria-hidden />
+              {apiServiceBadge.text}
+            </Badge>
+            <Badge
+              variant={downlinkBadge.variant}
+              className="gap-1 font-medium"
+              role="listitem"
+            >
+              <Download className="size-3.5 opacity-90" aria-hidden />
+              {downlinkBadge.text}
+            </Badge>
+          </div>
         </div>
+        <TabsList
+          className="grid h-auto w-full grid-cols-3 gap-1 rounded-lg bg-muted p-1 sm:h-10"
+          aria-label="Разделы результатов диагностики"
+        >
+          <TabsTrigger
+            value="connection"
+            className="gap-1.5 text-xs sm:text-sm"
+          >
+            {tabConnectionLoading ? (
+              <Loader2
+                className="size-3 shrink-0 animate-spin text-primary"
+                aria-hidden
+              />
+            ) : tabConnectionSuccess ? (
+              <Check
+                className="size-3 shrink-0 text-emerald-600 dark:text-emerald-400"
+                strokeWidth={2.5}
+                aria-hidden
+              />
+            ) : null}
+            Соединение
+          </TabsTrigger>
+          <TabsTrigger
+            value="whitelist"
+            className="gap-1.5 text-xs sm:text-sm"
+          >
+            {tabWhitelistLoading ? (
+              <Loader2
+                className="size-3 shrink-0 animate-spin text-primary"
+                aria-hidden
+              />
+            ) : tabWhitelistSuccess ? (
+              <Check
+                className="size-3 shrink-0 text-emerald-600 dark:text-emerald-400"
+                strokeWidth={2.5}
+                aria-hidden
+              />
+            ) : null}
+            Белые списки
+          </TabsTrigger>
+          <TabsTrigger
+            value="sysadmin"
+            className="gap-1.5 text-xs sm:text-sm"
+          >
+            {tabSysadminLoading ? (
+              <Loader2
+                className="size-3 shrink-0 animate-spin text-primary"
+                aria-hidden
+              />
+            ) : tabSysadminSuccess ? (
+              <Check
+                className="size-3 shrink-0 text-emerald-600 dark:text-emerald-400"
+                strokeWidth={2.5}
+                aria-hidden
+              />
+            ) : null}
+            Для сисадмина
+          </TabsTrigger>
+        </TabsList>
       </header>
 
+      <Separator />
+
       {running ? (
-        <div
+        <Alert
           role="status"
           aria-busy="true"
           aria-live="polite"
-          className="sticky top-0 z-40 -mx-4 mb-1 border border-border bg-background/95 px-4 py-3 shadow-sm backdrop-blur supports-[backdrop-filter]:bg-background/90 sm:-mx-0 sm:rounded-lg"
+          className="sticky top-0 z-40 -mx-4 max-sm:rounded-none border-primary/25 bg-background/95 shadow-sm backdrop-blur supports-[backdrop-filter]:bg-background/90 sm:-mx-0 sm:rounded-lg"
         >
-          <div className="flex items-start gap-3">
-            <Loader2
-              className="mt-0.5 size-9 shrink-0 animate-spin text-primary"
-              aria-hidden
-            />
-            <div className="min-w-0 flex-1 space-y-2">
-              <div className="flex flex-wrap items-center justify-between gap-x-2 gap-y-1">
-                <span className="text-sm font-medium leading-tight">
-                  Сценарий диагностики
-                </span>
-                <span className="tabular-nums text-xs text-muted-foreground">
-                  {runProgress}%
-                </span>
-              </div>
-              <Progress value={runProgress} className="h-2.5" />
-              <p className="text-xs leading-snug text-muted-foreground">
-                {phase ?? "…"}
-              </p>
-            </div>
-          </div>
-        </div>
+          <Loader2
+            className="size-4 shrink-0 animate-spin text-primary"
+            aria-hidden
+          />
+          <AlertTitle className="mb-2 flex flex-wrap items-center justify-between gap-2 pr-0 sm:pr-6">
+            <span>Полная диагностика выполняется</span>
+            <span className="tabular-nums text-xs font-normal text-muted-foreground">
+              {runProgress}%
+            </span>
+          </AlertTitle>
+          <AlertDescription className="mt-0 space-y-2 [&_p]:leading-snug">
+            <Progress value={runProgress} className="h-2" />
+            <p className="text-xs">{phase ?? "…"}</p>
+          </AlertDescription>
+        </Alert>
       ) : null}
 
       {error ? (
-        <Card className="border-destructive/50 bg-destructive/5">
-          <CardHeader className="pb-2">
-            <CardTitle className="text-base text-destructive">Ошибка</CardTitle>
-            <CardDescription>{error}</CardDescription>
-          </CardHeader>
-        </Card>
+        <Alert variant="destructive">
+          <AlertCircle className="size-4" aria-hidden />
+          <AlertTitle>Не удалось завершить сценарий</AlertTitle>
+          <AlertDescription className="text-destructive/90">
+            {error}
+          </AlertDescription>
+        </Alert>
       ) : null}
 
+        <TabsContent value="connection" className="mt-4 space-y-6 focus-visible:ring-0">
       <div className="grid gap-4 md:grid-cols-3">
         <Card>
           <CardHeader className="pb-2">
-            <CardTitle className="flex items-center gap-1 text-base font-medium">
+            <CardTitle className="flex items-center gap-2 text-base">
               <Gauge className="size-4 shrink-0 text-muted-foreground" aria-hidden />
               <span className="min-w-0 flex-1 leading-tight">
                 Throughput (HTTPS ↓)
@@ -503,7 +686,7 @@ export function ConnectionDashboard() {
 
         <Card>
           <CardHeader className="pb-2">
-            <CardTitle className="flex items-center gap-1 text-base font-medium">
+            <CardTitle className="flex items-center gap-2 text-base">
               <Network className="size-4 shrink-0 text-muted-foreground" aria-hidden />
               <span className="min-w-0 flex-1 leading-tight">
                 Потери на уровне HTTP
@@ -572,7 +755,7 @@ export function ConnectionDashboard() {
 
         <Card>
           <CardHeader className="pb-2">
-            <CardTitle className="flex items-center gap-1 text-base font-medium">
+            <CardTitle className="flex items-center gap-2 text-base">
               <Activity className="size-4 shrink-0 text-muted-foreground" aria-hidden />
               <span className="min-w-0 flex-1 leading-tight">
                 Стабильность RTT
@@ -655,13 +838,17 @@ export function ConnectionDashboard() {
         </Card>
       </div>
 
+      <Separator />
+
       <DeviceInfoPanel />
+
+      <Separator />
 
       <Card>
         <CardHeader className="pb-2">
-          <CardTitle className="flex items-center gap-1 text-base font-medium">
+          <CardTitle className="flex items-center gap-2 text-base">
             <Globe className="size-4 shrink-0 text-muted-foreground" aria-hidden />
-            <span className="min-w-0 flex-1 text-sm leading-tight sm:text-base">
+            <span className="min-w-0 flex-1 leading-tight">
               Reachability (HTTP/S)
             </span>
             <InfoTip label="Про таблицу" className="size-6 shrink-0">
@@ -702,51 +889,57 @@ export function ConnectionDashboard() {
             )}
           </div>
         </CardHeader>
-        <CardContent className="overflow-x-auto">
-          <table className="w-full min-w-[520px] border-collapse text-sm">
-            <thead>
-              <tr className="border-b text-left text-muted-foreground">
-                <th className="py-2 pr-2 font-medium">Регион</th>
-                <th className="py-2 pr-2 font-medium">Сервис</th>
-                <th className="py-2 pr-2 font-medium">Адрес</th>
-                <th className="py-2 pr-2 font-medium">Статус</th>
-                <th className="py-2 font-medium">Время (мс)</th>
-              </tr>
-            </thead>
-            <tbody>
+        <CardContent>
+          <Table className="min-w-[520px]">
+            <TableHeader>
+              <TableRow className="hover:bg-transparent">
+                <TableHead className="pl-0">Регион</TableHead>
+                <TableHead>Сервис</TableHead>
+                <TableHead>Адрес</TableHead>
+                <TableHead>Статус</TableHead>
+                <TableHead>Время (мс)</TableHead>
+              </TableRow>
+            </TableHeader>
+            <TableBody>
               {reachability.length ? (
                 <>
-                  <tr className="border-b border-border/80 bg-muted/40">
-                    <td
+                  <TableRow className="bg-muted/40 hover:bg-muted/40">
+                    <TableCell
                       colSpan={5}
-                      className="py-2 pl-2 text-xs font-semibold uppercase tracking-wide text-muted-foreground"
+                      className="pl-2 text-xs font-semibold uppercase tracking-wide text-muted-foreground"
                     >
                       Россия{" "}
                       <span className="font-medium normal-case text-foreground">
                         ({reachabilityByRegion.ru.ok}/{reachabilityByRegion.ru.total})
                       </span>
-                    </td>
-                  </tr>
+                    </TableCell>
+                  </TableRow>
                   {reachabilityRussia.map((row) => (
-                    <tr key={row.id} className="border-b border-border/60">
-                      <td className="py-2 pr-2 align-top">{row.region}</td>
-                      <td className="py-2 pr-2 align-top">{row.label}</td>
-                      <td className="max-w-[140px] truncate py-2 pr-2 align-top font-mono text-xs">
+                    <TableRow key={row.id} className="border-border/60">
+                      <TableCell className="pl-0 align-top">{row.region}</TableCell>
+                      <TableCell className="align-top">{row.label}</TableCell>
+                      <TableCell className="max-w-[140px] truncate align-top font-mono text-xs">
                         {row.host}
-                      </td>
-                      <td className="py-2 pr-2 align-top">
+                      </TableCell>
+                      <TableCell className="align-top">
                         {row.ok ? (
-                          <Badge variant="success">Да</Badge>
+                          <Badge variant="statusOk" className="gap-1">
+                            <Check className="size-3 shrink-0 opacity-90" aria-hidden />
+                            Да
+                          </Badge>
                         ) : (
-                          <Badge variant="destructive">Нет</Badge>
+                          <Badge variant="statusFail" className="gap-1">
+                            <X className="size-3 shrink-0 opacity-90" aria-hidden />
+                            Нет
+                          </Badge>
                         )}
-                      </td>
-                      <td className="py-2 align-top tabular-nums">
+                      </TableCell>
+                      <TableCell className="align-top tabular-nums">
                         {row.ok && row.ms != null
                           ? `${row.ms.toFixed(0)} мс`
                           : "—"}
-                      </td>
-                    </tr>
+                      </TableCell>
+                    </TableRow>
                   ))}
                   {running &&
                   reachabilityRussia.length < reachabilityTargetTotals.ruTotal ? (
@@ -755,48 +948,48 @@ export function ConnectionDashboard() {
                       cols={5}
                     />
                   ) : null}
-                  <tr aria-hidden="true">
-                    <td colSpan={5} className="border-t border-border py-2.5">
-                      <div className="flex items-center gap-3 text-muted-foreground/70">
-                        <span className="h-px min-w-[1rem] flex-1 bg-border" />
-                        <span className="shrink-0 select-none font-mono text-xs font-medium">
-                          ---
-                        </span>
-                        <span className="h-px min-w-[1rem] flex-1 bg-border" />
-                      </div>
-                    </td>
-                  </tr>
-                  <tr className="border-b border-border/80 bg-muted/40">
-                    <td
+                  <TableRow aria-hidden="true" className="hover:bg-transparent">
+                    <TableCell colSpan={5} className="py-2">
+                      <Separator />
+                    </TableCell>
+                  </TableRow>
+                  <TableRow className="bg-muted/40 hover:bg-muted/40">
+                    <TableCell
                       colSpan={5}
-                      className="py-2 pl-2 text-xs font-semibold uppercase tracking-wide text-muted-foreground"
+                      className="pl-2 text-xs font-semibold uppercase tracking-wide text-muted-foreground"
                     >
                       Зарубежные сайты{" "}
                       <span className="font-medium normal-case text-foreground">
                         ({reachabilityByRegion.abroad.ok}/{reachabilityByRegion.abroad.total})
                       </span>
-                    </td>
-                  </tr>
+                    </TableCell>
+                  </TableRow>
                   {reachabilityAbroad.map((row) => (
-                    <tr key={row.id} className="border-b border-border/60">
-                      <td className="py-2 pr-2 align-top">{row.region}</td>
-                      <td className="py-2 pr-2 align-top">{row.label}</td>
-                      <td className="max-w-[140px] truncate py-2 pr-2 align-top font-mono text-xs">
+                    <TableRow key={row.id} className="border-border/60">
+                      <TableCell className="pl-0 align-top">{row.region}</TableCell>
+                      <TableCell className="align-top">{row.label}</TableCell>
+                      <TableCell className="max-w-[140px] truncate align-top font-mono text-xs">
                         {row.host}
-                      </td>
-                      <td className="py-2 pr-2 align-top">
+                      </TableCell>
+                      <TableCell className="align-top">
                         {row.ok ? (
-                          <Badge variant="success">Да</Badge>
+                          <Badge variant="statusOk" className="gap-1">
+                            <Check className="size-3 shrink-0 opacity-90" aria-hidden />
+                            Да
+                          </Badge>
                         ) : (
-                          <Badge variant="destructive">Нет</Badge>
+                          <Badge variant="statusFail" className="gap-1">
+                            <X className="size-3 shrink-0 opacity-90" aria-hidden />
+                            Нет
+                          </Badge>
                         )}
-                      </td>
-                      <td className="py-2 align-top tabular-nums">
+                      </TableCell>
+                      <TableCell className="align-top tabular-nums">
                         {row.ok && row.ms != null
                           ? `${row.ms.toFixed(0)} мс`
                           : "—"}
-                      </td>
-                    </tr>
+                      </TableCell>
+                    </TableRow>
                   ))}
                   {running &&
                   reachabilityAbroad.length <
@@ -816,23 +1009,27 @@ export function ConnectionDashboard() {
                   cols={5}
                 />
               ) : (
-                <tr>
-                  <td
-                    colSpan={5}
-                    className="py-6 text-center text-muted-foreground"
-                  >
-                    Нет данных — запустите сценарий
-                  </td>
-                </tr>
+                <TableRow className="hover:bg-transparent">
+                  <TableCell colSpan={5} className="py-10">
+                    <Empty
+                      title="Нет данных"
+                      description="Нажмите «Полная диагностика», чтобы заполнить таблицу."
+                    />
+                  </TableCell>
+                </TableRow>
               )}
-            </tbody>
-          </table>
+            </TableBody>
+          </Table>
         </CardContent>
       </Card>
 
+        </TabsContent>
+
+        <TabsContent value="whitelist" className="mt-4 focus-visible:ring-0">
+
       <Card className="border-primary/20">
         <CardHeader className="pb-2">
-          <CardTitle className="flex items-center gap-1 text-base font-medium">
+          <CardTitle className="flex items-center gap-2 text-base">
             <ShieldCheck className="size-4 shrink-0 text-muted-foreground" aria-hidden />
             <span className="min-w-0 flex-1 leading-tight">
               Белый список Минцифры
@@ -867,40 +1064,46 @@ export function ConnectionDashboard() {
             )}
           </div>
         </CardHeader>
-        <CardContent className="overflow-x-auto">
-          <table className="w-full min-w-[520px] border-collapse text-sm">
-            <thead>
-              <tr className="border-b text-left text-muted-foreground">
-                <th className="py-2 pr-2 font-medium">Категория</th>
-                <th className="py-2 pr-2 font-medium">Сервис</th>
-                <th className="py-2 pr-2 font-medium">Адрес</th>
-                <th className="py-2 pr-2 font-medium">Статус</th>
-                <th className="py-2 font-medium">Время (мс)</th>
-              </tr>
-            </thead>
-            <tbody>
+        <CardContent>
+          <Table className="min-w-[520px]">
+            <TableHeader>
+              <TableRow className="hover:bg-transparent">
+                <TableHead className="pl-0">Категория</TableHead>
+                <TableHead>Сервис</TableHead>
+                <TableHead>Адрес</TableHead>
+                <TableHead>Статус</TableHead>
+                <TableHead>Время (мс)</TableHead>
+              </TableRow>
+            </TableHeader>
+            <TableBody>
               {whitelistReachability.length ? (
                 <>
                   {whitelistReachability.map((row) => (
-                    <tr key={row.id} className="border-b border-border/60">
-                      <td className="py-2 pr-2 align-top">{row.region}</td>
-                      <td className="py-2 pr-2 align-top">{row.label}</td>
-                      <td className="max-w-[140px] truncate py-2 pr-2 align-top font-mono text-xs">
+                    <TableRow key={row.id} className="border-border/60">
+                      <TableCell className="pl-0 align-top">{row.region}</TableCell>
+                      <TableCell className="align-top">{row.label}</TableCell>
+                      <TableCell className="max-w-[140px] truncate align-top font-mono text-xs">
                         {row.host}
-                      </td>
-                      <td className="py-2 pr-2 align-top">
+                      </TableCell>
+                      <TableCell className="align-top">
                         {row.ok ? (
-                          <Badge variant="success">Да</Badge>
+                          <Badge variant="statusOk" className="gap-1">
+                            <Check className="size-3 shrink-0 opacity-90" aria-hidden />
+                            Да
+                          </Badge>
                         ) : (
-                          <Badge variant="destructive">Нет</Badge>
+                          <Badge variant="statusFail" className="gap-1">
+                            <X className="size-3 shrink-0 opacity-90" aria-hidden />
+                            Нет
+                          </Badge>
                         )}
-                      </td>
-                      <td className="py-2 align-top tabular-nums">
+                      </TableCell>
+                      <TableCell className="align-top tabular-nums">
                         {row.ok && row.ms != null
                           ? `${row.ms.toFixed(0)} мс`
                           : "—"}
-                      </td>
-                    </tr>
+                      </TableCell>
+                    </TableRow>
                   ))}
                   {running && whitelistReachability.length < whitelistTargetTotal ? (
                     <TableSkeletonRows
@@ -912,19 +1115,218 @@ export function ConnectionDashboard() {
               ) : running ? (
                 <TableSkeletonRows rows={Math.min(8, whitelistTargetTotal)} cols={5} />
               ) : (
-                <tr>
-                  <td
-                    colSpan={5}
-                    className="py-6 text-center text-muted-foreground"
-                  >
-                    Нет данных — запустите сценарий
-                  </td>
-                </tr>
+                <TableRow className="hover:bg-transparent">
+                  <TableCell colSpan={5} className="py-10">
+                    <Empty
+                      title="Нет данных"
+                      description="Нажмите «Полная диагностика», чтобы заполнить таблицу."
+                    />
+                  </TableCell>
+                </TableRow>
               )}
-            </tbody>
-          </table>
+            </TableBody>
+          </Table>
         </CardContent>
       </Card>
+
+        </TabsContent>
+
+        <TabsContent value="sysadmin" className="mt-4 focus-visible:ring-0">
+
+      <Card className="border-dashed border-muted-foreground/30">
+        <CardHeader className="pb-2">
+          <CardTitle className="flex items-center gap-2 text-base">
+            <Server className="size-4 shrink-0 text-muted-foreground" aria-hidden />
+            <span className="min-w-0 flex-1 leading-tight">
+              Сводка для сисадминов
+            </span>
+            <InfoTip label="Зачем этот блок" className="size-6 shrink-0">
+              <p>
+                Дополнительные сигналы при разборе тикетов: совпадение часов с
+                сервером (TLS, Kerberos), доступность DoH (фаервол/DNS), версия
+                HTTP к образцам, подсказки Network Information API, локальный и
+                «внешний» IP через WebRTC/STUN.
+              </p>
+              <p>
+                Браузер не делает ICMP traceroute и не показывает сырой DNS; часть
+                полей скрыта политиками CORS/Timing-Allow-Origin.
+              </p>
+            </InfoTip>
+          </CardTitle>
+          <CardDescription>
+            Часы, DoH, nextHop (HTTP), Network API, WebRTC — в конце каждого полного
+            прогона
+          </CardDescription>
+        </CardHeader>
+        <CardContent className="space-y-4 text-sm">
+          {sysadminError ? (
+            <Alert variant="destructive">
+              <AlertCircle className="size-4" aria-hidden />
+              <AlertTitle className="text-sm">Сводка не собрана</AlertTitle>
+              <AlertDescription className="text-destructive/90 text-sm">
+                {sysadminError}
+              </AlertDescription>
+            </Alert>
+          ) : null}
+          {running &&
+          hasStarted &&
+          phase != null &&
+          phase.includes("сисадмин") ? (
+            <div className="space-y-2" aria-busy="true">
+              <div className="flex items-center gap-2 text-muted-foreground">
+                <Loader2 className="size-4 animate-spin" aria-hidden />
+                <span className="text-xs sm:text-sm">{phase}</span>
+              </div>
+              {Array.from({ length: 5 }).map((_, i) => (
+                <Skeleton key={i} className="h-4 w-full max-w-lg" />
+              ))}
+            </div>
+          ) : null}
+          {running &&
+          hasStarted &&
+          !(phase != null && phase.includes("сисадмин")) &&
+          !sysadminReport ? (
+            <p className="text-xs text-muted-foreground">
+              Выполняется полный сценарий — сводка появится после этапа доступности
+              хостов.
+            </p>
+          ) : null}
+          {!running && hasStarted && !sysadminReport && !sysadminError ? (
+            <p className="text-sm text-muted-foreground">
+              Нет данных — запустите полную диагностику до конца.
+            </p>
+          ) : null}
+          {sysadminReport ? (
+            <Accordion type="multiple" defaultValue={["summary"]} className="w-full">
+              <AccordionItem value="summary">
+                <AccordionTrigger>Сводка</AccordionTrigger>
+                <AccordionContent>
+                  <dl className="space-y-0 divide-y divide-border/60">
+                    <SysadminRow
+                      label="Смещение часов (клиент ↔ сервер приложения)"
+                      value={`${sysadminReport.clockSkewHuman}${sysadminReport.clockSkewMs != null ? ` (${sysadminReport.clockSkewMs > 0 ? "+" : ""}${sysadminReport.clockSkewMs} мс)` : ""}`}
+                    />
+                    <SysadminRow
+                      label="IPv4 / IPv6 (как передал прокси)"
+                      value={[
+                        sysadminReport.reportedIpv4 ?? "—",
+                        sysadminReport.reportedIpv6 ?? "—",
+                      ].join(" · ")}
+                    />
+                    <SysadminRow
+                      label="Источник IP в API"
+                      value={sysadminReport.ipSource ?? "—"}
+                    />
+                    <SysadminRow
+                      label="Безопасный контекст (HTTPS) · вкладка"
+                      value={`${sysadminReport.secureContext ? "да" : "нет"} · visibility: ${sysadminReport.visibilityState}`}
+                    />
+                    <SysadminRow
+                      label="Service Worker управляет страницей"
+                      value={sysadminReport.serviceWorkerControlling ? "да" : "нет"}
+                    />
+                    <SysadminRow
+                      label="Network Information API"
+                      value={formatNavigatorNetLine(sysadminReport.navigatorNet)}
+                    />
+                  </dl>
+                </AccordionContent>
+              </AccordionItem>
+
+              <AccordionItem value="doh">
+                <AccordionTrigger>DNS-over-HTTPS (DoH)</AccordionTrigger>
+                <AccordionContent>
+                  <dl className="space-y-0 divide-y divide-border/60">
+                    <SysadminRow
+                      label="Cloudflare"
+                      value={formatDohLine(sysadminReport.dohCloudflare)}
+                    />
+                    <SysadminRow
+                      label="Google"
+                      value={formatDohLine(sysadminReport.dohGoogle)}
+                    />
+                  </dl>
+                  <p className="mt-3 text-xs leading-snug text-muted-foreground">
+                    Это не «DNS вашего провайдера», а HTTPS-запросы к публичным
+                    резолверам. Часто блокируются корпоративными фильтрами.
+                  </p>
+                </AccordionContent>
+              </AccordionItem>
+
+              <AccordionItem value="http">
+                <AccordionTrigger>Протокол HTTP (nextHopProtocol)</AccordionTrigger>
+                <AccordionContent>
+                  <dl className="space-y-0 divide-y divide-border/60">
+                    {sysadminReport.nextHop.map((row) => (
+                      <SysadminRow
+                        key={row.label}
+                        label={row.label}
+                        value={
+                          row.protocol != null && row.protocol !== ""
+                            ? row.protocol
+                            : "н/д (часто для чужого origin без Timing-Allow-Origin)"
+                        }
+                      />
+                    ))}
+                  </dl>
+                </AccordionContent>
+              </AccordionItem>
+
+              <AccordionItem value="webrtc">
+                <AccordionTrigger>WebRTC / STUN</AccordionTrigger>
+                <AccordionContent>
+                  {sysadminReport.ice.error ? (
+                    <p className="text-sm text-destructive">{sysadminReport.ice.error}</p>
+                  ) : (
+                    <div className="space-y-3 text-sm">
+                      <div>
+                        <span className="text-muted-foreground">host: </span>
+                        <span className="font-mono text-xs">
+                          {sysadminReport.ice.hostIps.length
+                            ? sysadminReport.ice.hostIps.join(", ")
+                            : "—"}
+                        </span>
+                      </div>
+                      <div className="flex flex-wrap items-center gap-2">
+                        <span className="text-muted-foreground">srflx: </span>
+                        <span className="font-mono text-xs">
+                          {sysadminReport.ice.srflxIps.length
+                            ? sysadminReport.ice.srflxIps.join(", ")
+                            : "—"}
+                        </span>
+                        {sysadminReport.egressMatchesHeaderIpv4 === true ? (
+                          <Badge variant="success" className="text-[10px]">
+                            совпадает с IPv4 из заголовка
+                          </Badge>
+                        ) : sysadminReport.egressMatchesHeaderIpv4 === false ? (
+                          <Badge variant="warning" className="text-[10px]">
+                            STUN ≠ IPv4 прокси — NAT, VPN или асимметрия
+                          </Badge>
+                        ) : null}
+                      </div>
+                      {sysadminReport.ice.relayIps.length > 0 ? (
+                        <div>
+                          <span className="text-muted-foreground">relay: </span>
+                          <span className="font-mono text-xs">
+                            {sysadminReport.ice.relayIps.join(", ")}
+                          </span>
+                        </div>
+                      ) : null}
+                    </div>
+                  )}
+                  <p className="mt-3 text-xs leading-snug text-muted-foreground">
+                    {sysadminReport.ice.note}
+                  </p>
+                </AccordionContent>
+              </AccordionItem>
+            </Accordion>
+          ) : null}
+        </CardContent>
+      </Card>
+
+        </TabsContent>
+      </Tabs>
+      )}
 
     </div>
     </TooltipProvider>

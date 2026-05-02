@@ -1,9 +1,16 @@
 "use client";
 
 import { useCallback, useEffect, useState } from "react";
-import { Copy, Check, MonitorSmartphone, Loader2 } from "lucide-react";
+import {
+  AlertCircle,
+  Check,
+  Copy,
+  Loader2,
+  MonitorSmartphone,
+} from "lucide-react";
 
 import { InfoTip } from "@/components/info-tip";
+import { Alert, AlertDescription, AlertTitle } from "@/components/ui/alert";
 import { Button } from "@/components/ui/button";
 import {
   Card,
@@ -12,6 +19,7 @@ import {
   CardHeader,
   CardTitle,
 } from "@/components/ui/card";
+import { Skeleton } from "@/components/ui/skeleton";
 import {
   buildDeviceInfoReport,
   deviceInfoToPlainText,
@@ -138,13 +146,32 @@ export function DeviceInfoPanel() {
       </CardHeader>
       <CardContent className="space-y-4 text-sm">
         {loading && !data ? (
-          <div className="flex items-center gap-2 text-muted-foreground">
-            <Loader2 className="size-4 animate-spin" aria-hidden />
-            Запрос /api/client-info и сбор полей…
+          <div className="space-y-0" aria-busy="true" aria-live="polite">
+            <div className="flex items-center gap-2 pb-3 text-muted-foreground">
+              <Loader2 className="size-4 shrink-0 animate-spin" aria-hidden />
+              <span className="text-xs sm:text-sm">
+                Запрос /api/client-info и сбор полей…
+              </span>
+            </div>
+            {Array.from({ length: 6 }).map((_, i) => (
+              <div
+                key={i}
+                className="grid gap-2 border-b border-border/50 py-3 sm:grid-cols-[minmax(0,11rem)_1fr] sm:gap-4"
+              >
+                <Skeleton className="h-4 w-28" />
+                <Skeleton className="h-4 w-full max-w-lg" />
+              </div>
+            ))}
           </div>
         ) : null}
         {err ? (
-          <p className="text-destructive text-sm">{err}</p>
+          <Alert variant="destructive">
+            <AlertCircle className="size-4" aria-hidden />
+            <AlertTitle className="text-sm">Не удалось загрузить сведения</AlertTitle>
+            <AlertDescription className="text-destructive/90 text-sm">
+              {err}
+            </AlertDescription>
+          </Alert>
         ) : null}
         {data ? (
           <>

@@ -19,6 +19,11 @@ const badgeVariants = cva(
           "border-transparent bg-amber-500 text-white hover:bg-amber-500/90",
         destructive:
           "border-transparent bg-destructive text-destructive-foreground shadow hover:bg-destructive/80",
+        /** Доступность в таблицах: контур + лёгкая заливка, без «кнопочного» сплошного цвета */
+        statusOk:
+          "rounded-full border border-emerald-600/40 bg-emerald-500/[0.11] px-2.5 py-0.5 font-medium text-emerald-900 shadow-none hover:bg-emerald-500/[0.16] dark:border-emerald-500/45 dark:bg-emerald-500/15 dark:text-emerald-100",
+        statusFail:
+          "rounded-full border border-red-600/40 bg-red-500/[0.1] px-2.5 py-0.5 font-medium text-red-900 shadow-none hover:bg-red-500/[0.15] dark:border-red-500/45 dark:bg-red-500/12 dark:text-red-100",
       },
     },
     defaultVariants: {
